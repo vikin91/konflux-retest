@@ -43,14 +43,14 @@ type (
 	}
 )
 
-// file reads the PR's pinned source, including fork-specific pipeline parameters.
+// file reads pinned source, including fork-specific pipeline parameters.
 func (c githubClient) file(ctx context.Context, repo, sha, path string) ([]byte, error) {
 	var response struct {
 		Encoding string `json:"encoding"`
 		Content  string `json:"content"`
 	}
 	if err := c.get(ctx, fmt.Sprintf("/repos/%s/contents/%s?ref=%s", repo, path, url.QueryEscape(sha)), &response); err != nil {
-		return nil, fmt.Errorf("read %s at PR head: %w", path, err)
+		return nil, fmt.Errorf("read %s at commit %s: %w", path, sha, err)
 	}
 	if response.Encoding != "base64" {
 		return nil, fmt.Errorf("unsupported GitHub content encoding for %s", path)
@@ -122,16 +122,45 @@ func reportPR(ctx context.Context, c githubClient, checker inputChecker, repo st
 	if pr.Head.SHA == "" {
 		return fmt.Errorf("GitHub returned an empty PR head SHA")
 	}
-	checks, err := c.checks(ctx, repo, pr.Head.SHA)
+	reported = true
+	headRepo := pr.Head.Repo.FullName
+	if headRepo == "" {
+		headRepo = repo
+	}
+	return reportCommit(ctx, c, checker, repo, headRepo, pr.Head.SHA, out)
+}
+
+// reportTag resolves the fully qualified tag ref so a same-named branch cannot
+// select a different commit. GitHub peels annotated tags through the commits API.
+func reportTag(ctx context.Context, c githubClient, checker inputChecker, repo, tag string, out io.Writer) error {
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	err := c.get(ctx, fmt.Sprintf("/repos/%s/commits/%s", repo, url.PathEscape("refs/tags/"+tag)), &commit)
+	if err == nil && commit.SHA == "" {
+		err = errors.New("GitHub returned an empty tag commit SHA")
+	}
 	if err != nil {
+		err = fmt.Errorf("resolve tag %q: %w", tag, err)
+		fmt.Fprintf(out, "---\nhttps://github.com/%s/tree/%s\n\nNext action: Wait\nCould not determine which jobs to retry.\n\nWarnings:\nerror: %v\n", repo, url.PathEscape("refs/tags/"+tag), err)
 		return err
 	}
-	plan := planRetries(checks, nil)
-	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, pr, checks, plan.jobs)
-	plan = planRetries(checks, unavailable)
+	fmt.Fprintf(out, "---\nhttps://github.com/%s/commit/%s\nTag: %s\n\n", repo, commit.SHA, tag)
+	return reportCommit(ctx, c, checker, repo, repo, commit.SHA, out)
+}
+
+// reportCommit shares retry planning and input checks between PR heads and tags.
+func reportCommit(ctx context.Context, c githubClient, checker inputChecker, repo, sourceRepo, sha string, out io.Writer) error {
+	checks, err := c.checks(ctx, repo, sha)
+	if err != nil {
+		fmt.Fprintf(out, "Next action: Wait\nCould not determine which jobs to retry.\n\nWarnings:\nerror: %v\n", err)
+		return err
+	}
+	plan := planRetries(repo, checks, nil)
+	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, sha, checks, plan.jobs)
+	plan = planRetries(repo, checks, unavailable)
 	printPlan(out, plan, warnings)
 	// The complete error is already in the Warnings section.
-	reported = true
 	return inputErr
 }
 
@@ -171,20 +200,16 @@ func printPlan(out io.Writer, plan retryPlan, warnings []string) {
 	}
 }
 
-func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker, repo string, pr pullRequest, checks []checkRun, jobs []string) (map[string]string, []string, error) {
+func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker, repo, sourceRepo, sha string, checks []checkRun, jobs []string) (map[string]string, []string, error) {
 	unavailable := make(map[string]string)
 	var warnings []string
 	var lookupErrors []error
-	headRepo := pr.Head.Repo.FullName
-	if headRepo == "" {
-		headRepo = repo
-	}
 	files := make(map[string][]byte)
 	readFile := func(path string) ([]byte, error) {
 		if data, exists := files[path]; exists {
 			return data, nil
 		}
-		data, err := c.file(ctx, headRepo, pr.Head.SHA, path)
+		data, err := c.file(ctx, sourceRepo, sha, path)
 		if err == nil {
 			files[path] = data
 		}
@@ -194,7 +219,7 @@ func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker,
 		if !strings.HasPrefix(job, "retag-") {
 			continue
 		}
-		requirement, err := resolveImage(readFile, job, "https://github.com/"+repo, pr.Head.SHA)
+		requirement, err := resolveImage(readFile, job, "https://github.com/"+repo, sha)
 		if err != nil {
 			unavailable[job] = "cannot resolve input requirements: " + err.Error()
 			lookupErrors = append(lookupErrors, err)

@@ -16,17 +16,29 @@ func TestParseOptions(t *testing.T) {
 		want    options
 		invalid bool
 	}{
-		"should enable optional Docker verification":    {args: []string{"--verify-pull", "--prs", "23958"}, want: options{repo: "stackrox/stackrox", prs: []int{23958}, verifyPull: true}},
-		"should accept the requested syntax":            {args: []string{"--repo", "stackrox", "--prs", "2345", "3456", "4567"}, want: options{repo: "stackrox/stackrox", prs: []int{2345, 3456, 4567}}},
-		"should accept qualified repos and comma lists": {args: []string{"--repo", "other/repo", "--prs=1,2,1"}, want: options{repo: "other/repo", prs: []int{1, 2}}},
-		"should accept quoted PR lists":                 {args: []string{"--prs", "1 2"}, want: options{repo: "stackrox/stackrox", prs: []int{1, 2}}},
-		"should reject missing PRs":                     {invalid: true},
-		"should reject empty PR lists":                  {args: []string{"--prs", ","}, invalid: true},
-		"should reject zero PR numbers":                 {args: []string{"--prs", "0"}, invalid: true},
-		"should reject negative PR numbers":             {args: []string{"--prs", "-1"}, invalid: true},
-		"should reject text PR numbers":                 {args: []string{"--prs", "1", "bad"}, invalid: true},
-		"should reject malformed repos":                 {args: []string{"--repo", "https://github.com/a/b", "--prs", "1"}, invalid: true},
-		"should reject unknown flags":                   {args: []string{"--bogus"}, invalid: true},
+		"should accept the requested tag syntax":           {args: []string{"--repo", "stackrox/scanner", "--tags", "2.39.27"}, want: options{repo: "stackrox/scanner", tags: []string{"2.39.27"}}},
+		"should deduplicate tags in input order":           {args: []string{"--repo", "scanner", "--tags", "2.39.27,2.39.28", "2.39.27", "v2.40.0"}, want: options{repo: "stackrox/scanner", tags: []string{"2.39.27", "2.39.28", "v2.40.0"}}},
+		"should accept quoted tag lists and namespaces":    {args: []string{"--tags", "release/v1 v2"}, want: options{repo: "stackrox/stackrox", tags: []string{"release/v1", "v2"}}},
+		"should allow optional verification with tags":     {args: []string{"--verify-pull", "--tags", "v1"}, want: options{repo: "stackrox/stackrox", tags: []string{"v1"}, verifyPull: true}},
+		"should reject mixed PR and tag lists":             {args: []string{"--prs", "1", "--tags", "v1"}, invalid: true},
+		"should reject mixed lists even when one is empty": {args: []string{"--prs=", "--tags", "v1"}, invalid: true},
+		"should reject empty tags":                         {args: []string{"--tags="}, invalid: true},
+		"should reject separator-only tags":                {args: []string{"--tags", ", \t"}, invalid: true},
+		"should reject flags after positional tags":        {args: []string{"--tags", "v1", "v2", "--prs", "1"}, invalid: true},
+		"should reject tag revision expressions":           {args: []string{"--tags", "v1~1"}, invalid: true},
+		"should reject invalid tag namespaces":             {args: []string{"--tags", "release//v1"}, invalid: true},
+		"should reject control characters in tags":         {args: []string{"--tags", "v1\x1b"}, invalid: true},
+		"should enable optional Docker verification":       {args: []string{"--verify-pull", "--prs", "23958"}, want: options{repo: "stackrox/stackrox", prs: []int{23958}, verifyPull: true}},
+		"should accept the requested syntax":               {args: []string{"--repo", "stackrox", "--prs", "2345", "3456", "4567"}, want: options{repo: "stackrox/stackrox", prs: []int{2345, 3456, 4567}}},
+		"should accept qualified repos and comma lists":    {args: []string{"--repo", "other/repo", "--prs=1,2,1"}, want: options{repo: "other/repo", prs: []int{1, 2}}},
+		"should accept quoted PR lists":                    {args: []string{"--prs", "1 2"}, want: options{repo: "stackrox/stackrox", prs: []int{1, 2}}},
+		"should reject missing PRs":                        {invalid: true},
+		"should reject empty PR lists":                     {args: []string{"--prs", ","}, invalid: true},
+		"should reject zero PR numbers":                    {args: []string{"--prs", "0"}, invalid: true},
+		"should reject negative PR numbers":                {args: []string{"--prs", "-1"}, invalid: true},
+		"should reject text PR numbers":                    {args: []string{"--prs", "1", "bad"}, invalid: true},
+		"should reject malformed repos":                    {args: []string{"--repo", "https://github.com/a/b", "--prs", "1"}, invalid: true},
+		"should reject unknown flags":                      {args: []string{"--bogus"}, invalid: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -53,7 +65,7 @@ func TestHelpExplainsAuthenticationAndMilestones(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("got %v", err)
 	}
-	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push"} {
+	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push", "--tags", "scanner-db-slim-on-push"} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("help missing %q", text)
 		}

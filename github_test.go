@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -158,5 +160,130 @@ func TestReportPRPrintsActionBlockBeforeDiagnostics(t *testing.T) {
 				t.Fatal("expected policy diagnostics after the action block")
 			}
 		})
+	}
+}
+
+func TestReportTag(t *testing.T) {
+	const sha = "6938eeab2b7ba5235bc4c710d56e742aab6ac52f"
+	tests := map[string]struct {
+		tag        string
+		status     int
+		body       string
+		checksFail bool
+		wantError  bool
+	}{
+		"should resolve the Scanner tag to its commit":           {tag: "2.39.27", status: 200, body: `{"sha":"` + sha + `"}`},
+		"should resolve namespaced tags without branch fallback": {tag: "release/2.39.27", status: 200, body: `{"sha":"` + sha + `"}`},
+		"should escape valid URL-sensitive tag characters":       {tag: "release/v1#build%2F", status: 200, body: `{"sha":"` + sha + `"}`},
+		"should report missing tags":                             {tag: "missing", status: 404, body: "sensitive-response", wantError: true},
+		"should report denied access":                            {tag: "2.39.27", status: 403, body: "sensitive-response", wantError: true},
+		"should reject empty commit SHAs":                        {tag: "2.39.27", status: 200, body: `{}`, wantError: true},
+		"should reject malformed tag responses":                  {tag: "2.39.27", status: 200, body: `invalid`, wantError: true},
+		"should report check lookup errors once":                 {tag: "2.39.27", status: 200, body: `{"sha":"` + sha + `"}`, checksFail: true, wantError: true},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodGet {
+					t.Errorf("unexpected mutation: %s", r.Method)
+				}
+				switch r.URL.Path {
+				case "/repos/stackrox/scanner/commits/refs/tags/" + tt.tag:
+					if r.URL.RawQuery != "" {
+						t.Errorf("tag changed the query: %s", r.URL.RawQuery)
+					}
+					w.WriteHeader(tt.status)
+					fmt.Fprint(w, tt.body)
+				case "/repos/stackrox/scanner/commits/" + sha + "/check-runs":
+					if tt.checksFail {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					checks := []checkRun{
+						buildCheck("scanner-on-push", "completed", "failure"),
+						buildCheck("scanner-db-on-push", "completed", "failure"),
+						buildCheck("scanner-slim-on-push", "completed", "failure"),
+						buildCheck("scanner-db-slim-on-push", "completed", "failure"),
+						buildCheck("acs-conforma-dev-4-10 / scanner-slim-4-10", "completed", "failure"),
+					}
+					json.NewEncoder(w).Encode(map[string]any{"check_runs": checks})
+				default:
+					t.Errorf("unexpected path: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			var out strings.Builder
+			err := reportTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/scanner", tt.tag, &out)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("error=%v; wantError=%v", err, tt.wantError)
+			}
+			if strings.Count(out.String(), "Next action:") != 1 || strings.Count(out.String(), "Warnings:") != 1 {
+				t.Fatalf("invalid report: %s", out.String())
+			}
+			if tt.wantError {
+				if strings.Contains(out.String(), "/konflux-retest") || strings.Contains(out.String(), "sensitive-response") || !strings.Contains(out.String(), "Next action: Wait") {
+					t.Fatalf("invalid error report: %s", out.String())
+				}
+				return
+			}
+			want := "---\nhttps://github.com/stackrox/scanner/commit/" + sha + "\nTag: " + tt.tag + "\n\n" +
+				"Next action: Retest\n/konflux-retest scanner-on-push\n/konflux-retest scanner-db-on-push\n" +
+				"/konflux-retest scanner-slim-on-push\n/konflux-retest scanner-db-slim-on-push\n\nWarnings:\nNone.\n"
+			if out.String() != want {
+				t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+			}
+		})
+	}
+}
+
+func TestReportTagChecksRetagInputsAtResolvedCommit(t *testing.T) {
+	files := requirementFiles(t)
+	checks := successfulChecks()
+	for i := range checks {
+		if checks[i].Name == checkPrefix+"retag-scanner" || checks[i].Name == checkPrefix+"operator-bundle-on-push" {
+			checks[i].Conclusion = "failure"
+		}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected mutation: %s", r.Method)
+		}
+		switch {
+		case r.URL.Path == "/repos/stackrox/stackrox/commits/refs/tags/4.10.9":
+			fmt.Fprint(w, `{"sha":"tag-commit"}`)
+		case r.URL.Path == "/repos/stackrox/stackrox/commits/tag-commit/check-runs":
+			json.NewEncoder(w).Encode(map[string]any{"check_runs": checks})
+		case strings.HasPrefix(r.URL.Path, "/repos/stackrox/stackrox/contents/"):
+			if r.URL.Query().Get("ref") != "tag-commit" {
+				t.Error("input requirements must use the resolved commit")
+			}
+			path := strings.TrimPrefix(r.URL.Path, "/repos/stackrox/stackrox/contents/")
+			data, ok := files[path]
+			if !ok {
+				t.Errorf("unexpected file: %s", path)
+			}
+			json.NewEncoder(w).Encode(map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString(data)})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	checked := false
+	checker := inputChecker{logs: func(_ context.Context, check checkRun, requirement imageRequirement) (logEvidence, error) {
+		checked = true
+		if check.Name != checkPrefix+"retag-scanner" || requirement.revision != "tag-commit" || requirement.sourceURL != "https://github.com/stackrox/stackrox" {
+			t.Errorf("wrong input context: check=%+v requirement=%+v", check, requirement)
+		}
+		return logEvidence{reason: "Konflux reported image not found"}, nil
+	}}
+	var out strings.Builder
+	err := reportTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, checker, "stackrox/stackrox", "4.10.9", &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !checked || !strings.Contains(out.String(), "Konflux reported image not found") || strings.Contains(out.String(), "/konflux-retest") {
+		t.Fatalf("missing inputs must withhold retag and downstream retries: %s", out.String())
 	}
 }

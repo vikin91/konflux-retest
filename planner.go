@@ -24,8 +24,12 @@ var (
 		{"operator-bundle-on-push"},
 		{"operator-index-on-push", "create-custom-snapshot"},
 	}
+	// scannerMilestones contains independent image builds from the Scanner repository.
+	scannerMilestones = [][]string{
+		{"scanner-on-push", "scanner-db-on-push", "scanner-slim-on-push", "scanner-db-slim-on-push"},
+	}
 	// policyCheck recognizes supported scenarios and components across release streams.
-	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)? / (central-db|main|operator|scanner-v4|scanner-v4-db|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?$`)
+	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)? / (central-db|main|operator|scanner-v4|scanner-v4-db|scanner|scanner-db|scanner-slim|scanner-db-slim|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?$`)
 )
 
 type retryPlan struct {
@@ -35,7 +39,11 @@ type retryPlan struct {
 	noRetryAction string
 }
 
-func planRetries(checks []checkRun, unavailable map[string]string) retryPlan {
+func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
+	stages := milestones
+	if strings.EqualFold(repo, "stackrox/scanner") {
+		stages = scannerMilestones
+	}
 	plan := retryPlan{noRetryAction: "No build retests needed."}
 	latest := make(map[string]checkRun)
 	for _, check := range checks {
@@ -63,7 +71,7 @@ func planRetries(checks []checkRun, unavailable map[string]string) retryPlan {
 		check := latest[fullName]
 		name, prefixed := strings.CutPrefix(fullName, checkPrefix)
 		switch {
-		case prefixed && knownJob(name):
+		case prefixed && knownJob(name, stages):
 			jobs[name] = check
 		case prefixed && policyCheck.MatchString(name):
 			if check.Status == "completed" && check.Conclusion != "success" && check.Conclusion != "skipped" {
@@ -87,7 +95,7 @@ func planRetries(checks []checkRun, unavailable map[string]string) retryPlan {
 		_, exists := jobs[name]
 		return exists
 	})
-	for phase, names := range milestones {
+	for phase, names := range stages {
 		if phase > 0 && unknownUnfinished {
 			plan.noRetryAction = "Wait: an unknown Konflux check has not succeeded. Inspect the warning below before retrying downstream jobs."
 			plan.messages = append(plan.messages, "later milestones withheld because an unknown Konflux check has not succeeded.")
@@ -128,11 +136,11 @@ func planRetries(checks []checkRun, unavailable map[string]string) retryPlan {
 	return plan
 }
 
-func knownJob(name string) bool {
+func knownJob(name string, stages [][]string) bool {
 	if name == "checks" {
 		return true
 	}
-	for _, names := range milestones {
+	for _, names := range stages {
 		if slices.Contains(names, name) {
 			return true
 		}

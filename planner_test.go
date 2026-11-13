@@ -126,7 +126,7 @@ func TestPlanRetries(t *testing.T) {
 				checks = append(checks, check)
 			}
 			checks = append(checks, tt.extra...)
-			got := planRetries(checks, nil)
+			got := planRetries("stackrox/stackrox", checks, nil)
 			if !slices.Equal(got.jobs, tt.want) {
 				t.Fatalf("jobs = %v; want %v", got.jobs, tt.want)
 			}
@@ -138,7 +138,7 @@ func TestPlanRetries(t *testing.T) {
 }
 
 func TestPlanRetriesNoKonfluxChecks(t *testing.T) {
-	plan := planRetries(nil, nil)
+	plan := planRetries("stackrox/stackrox", nil, nil)
 	if len(plan.jobs) != 0 || !strings.Contains(strings.Join(plan.messages, ""), "no Konflux checks") {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -147,7 +147,7 @@ func TestPlanRetriesNoKonfluxChecks(t *testing.T) {
 func TestPlanRetriesRecognizesKonfluxApp(t *testing.T) {
 	check := checkRun{Name: "new unprefixed job", Status: "queued"}
 	check.App.Slug = "red-hat-konflux"
-	plan := planRetries([]checkRun{check}, nil)
+	plan := planRetries("stackrox/stackrox", []checkRun{check}, nil)
 	if len(plan.jobs) != 0 || !strings.Contains(strings.Join(plan.messages, ""), "WARNING: unknown Konflux check") {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -167,7 +167,7 @@ func TestPlanRetriesIgnoresConformaDev(t *testing.T) {
 				}
 			}
 			checks = append(checks, buildCheck(name, "completed", "failure"))
-			plan := planRetries(checks, nil)
+			plan := planRetries("stackrox/stackrox", checks, nil)
 			if !slices.Equal(plan.jobs, []string{"operator-bundle-on-push"}) {
 				t.Fatalf("ignored dev check must not block bundle retries: %v", plan.jobs)
 			}
@@ -179,7 +179,7 @@ func TestPlanRetriesIgnoresConformaDev(t *testing.T) {
 }
 
 func TestPlanRetriesDoesNotIgnoreSimilarScenarioNames(t *testing.T) {
-	plan := planRetries(append(successfulChecks(), buildCheck("acs-conforma-development / main", "completed", "failure")), nil)
+	plan := planRetries("stackrox/stackrox", append(successfulChecks(), buildCheck("acs-conforma-development / main", "completed", "failure")), nil)
 	if !strings.Contains(strings.Join(plan.messages, "\n"), "WARNING: unknown Konflux check") {
 		t.Fatalf("unexpectedly ignored a different scenario: %v", plan.messages)
 	}
@@ -244,7 +244,7 @@ func TestPlanRetriesScannerRetags(t *testing.T) {
 				}
 				checks = append(checks, check)
 			}
-			plan := planRetries(append(checks, tt.scannerChecks...), nil)
+			plan := planRetries("stackrox/stackrox", append(checks, tt.scannerChecks...), nil)
 			if !slices.Equal(plan.jobs, tt.want) {
 				t.Fatalf("jobs = %v; want %v", plan.jobs, tt.want)
 			}
@@ -254,6 +254,61 @@ func TestPlanRetriesScannerRetags(t *testing.T) {
 			}
 			if strings.Contains(messages, "unknown Konflux") {
 				t.Fatalf("known scanner jobs must not warn: %s", messages)
+			}
+		})
+	}
+}
+
+func TestPlanScannerRetries(t *testing.T) {
+	tests := map[string]struct {
+		repo    string
+		checks  []checkRun
+		want    []string
+		message string
+	}{
+		"should retry failed peers while preserving successful and running builds": {
+			repo: "stackrox/scanner",
+			checks: []checkRun{
+				buildCheck("scanner-on-push", "completed", "success"),
+				buildCheck("scanner-db-on-push", "completed", "failure"),
+				buildCheck("scanner-slim-on-push", "in_progress", ""),
+				buildCheck("scanner-db-slim-on-push", "completed", "timed_out"),
+			},
+			want: []string{"scanner-db-on-push", "scanner-db-slim-on-push"}, message: "scanner-slim-on-push (in_progress)",
+		},
+		"should use the latest rerun and report missing Scanner checks": {
+			repo: "StackRox/Scanner",
+			checks: []checkRun{
+				buildCheck("scanner-on-push", "completed", "failure"),
+				{ID: 2, Name: checkPrefix + "scanner-on-push", Status: "completed", Conclusion: "success"},
+			}, message: "scanner-db-on-push (missing)",
+		},
+		"should report Scanner policy failures without retrying them": {
+			repo:    "stackrox/scanner",
+			checks:  []checkRun{buildCheck("acs-conforma-prod-4-10 / scanner-db-slim-4-10", "completed", "failure")},
+			message: "policy check",
+		},
+		"should not accept unknown Scanner jobs": {
+			repo: "stackrox/scanner", checks: []checkRun{buildCheck("scanner-new-on-push", "completed", "failure")},
+			message: "unknown Konflux check",
+		},
+		"should keep Scanner builds out of the StackRox catalog": {
+			repo: "stackrox/stackrox", checks: []checkRun{buildCheck("scanner-on-push", "completed", "failure")},
+			message: "unknown Konflux check",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			plan := planRetries(tt.repo, tt.checks, nil)
+			if !slices.Equal(plan.jobs, tt.want) {
+				t.Fatalf("jobs=%v; want %v", plan.jobs, tt.want)
+			}
+			messages := strings.Join(plan.messages, "\n")
+			if !strings.Contains(messages, tt.message) {
+				t.Fatalf("messages=%q; want %q", messages, tt.message)
+			}
+			if strings.EqualFold(tt.repo, "stackrox/scanner") && strings.Contains(messages, "operator") {
+				t.Fatalf("Scanner builds should not require StackRox jobs: %s", messages)
 			}
 		})
 	}

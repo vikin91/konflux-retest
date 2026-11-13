@@ -1,6 +1,6 @@
 # konflux-retest
 
-Work out which failed StackRox Konflux jobs to restart next, and print the PR comments you can copy and post yourself.
+Work out which failed StackRox or Scanner Konflux jobs to restart next, and print retest comments you can copy and post yourself.
 
 ## What problem does this solve?
 
@@ -8,7 +8,7 @@ Konflux is the build system behind the `Red Hat Konflux` checks on StackRox pull
 
 One failed image build can therefore leave several checks red. Restarting every red check at once can waste time: jobs that need the missing image may time out again while waiting for it. Even a check that GitHub does not mark as required can block a required check.
 
-This tool reads the checks on each PR's latest commit and tells you what to restart **now**. It keeps successful jobs, suggests failed jobs in the first unfinished milestone, and tells you to wait when prerequisites are still running or unavailable. After the suggested jobs pass, run the tool again to get the next milestone.
+This tool reads the checks on each PR's latest commit or each tag's resolved commit and tells you what to restart **now**. It keeps successful jobs, suggests failed jobs in the first unfinished milestone, and tells you to wait when prerequisites are still running or unavailable. After the suggested jobs pass, run the tool again to get the next milestone.
 
 It checks retag input images before suggesting those retries. It does not diagnose build logs or fix the underlying failure; a repeatable code error still needs investigation.
 
@@ -16,7 +16,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 **No. Running this tool does not post anything to GitHub in your name.** It does not create comments, restart jobs, or change PRs. The `/konflux-retest` lines are printed text. A restart is requested only when you choose to post a line as a PR comment yourself.
 
-The implementation uses only HTTP `GET` requests to read PR details, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [main.go](main.go); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
+The implementation uses only HTTP `GET` requests to read PR details, tag commits, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [main.go](main.go); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
 
 ## Build
 
@@ -46,6 +46,14 @@ Use the full repository name and a comma-separated PR list:
 ./konflux-retest --repo stackrox/stackrox --prs 23956,23957,23958
 ```
 
+Check a tagged Scanner build:
+
+```sh
+./konflux-retest --repo stackrox/scanner --tags 2.39.27
+```
+
+Multiple tags work the same way: `--tags 2.39.27,2.39.28` or `--tags 2.39.27 2.39.28`. Lightweight and annotated tags resolve through `refs/tags/`, so a branch with the same name cannot select a different commit. Each report includes the tag name and its commit link. A missing tag produces an error report; the tool continues with the remaining tags.
+
 Save the complete PR reports, including warnings, to a file:
 
 ```sh
@@ -58,7 +66,7 @@ Show help, including authentication and the embedded milestones:
 ./konflux-retest --help
 ```
 
-`--repo stackrox` means `stackrox/stackrox`. Other short names use the `stackrox` owner; an explicit `OWNER/REPO` is also accepted. This does not change the embedded StackRox dependency graph. Put `--repo` before `--prs`. Space-separated and comma-separated PR numbers are accepted. Duplicate numbers are processed once.
+`--repo stackrox` means `stackrox/stackrox`. Other short names use the `stackrox` owner; an explicit `OWNER/REPO` is also accepted. The `stackrox/scanner` repository uses the Scanner job catalog; other repositories use the StackRox catalog. Choose either `--prs` or `--tags` and put other flags before the list. Both lists accept spaces or commas and process duplicate entries once.
 
 Every PR report follows this format on stdout. `Next action` is `Retest`, `Investigate missing images`, `Wait`, or `None`. Warnings appear once under `Warnings:`; argument and startup errors use stderr. No authentication banner is printed.
 
@@ -123,6 +131,8 @@ References: [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_toke
 | Independent | `checks` |
 | Policy validation; no retry comments | `acs-conforma-prod`, `acs-conforma-prod-like`, optionally suffixed with a release such as `-5-0`, for components `central-db`, `main`, `operator`, `scanner-v4`, `scanner-v4-db`, `operator-bundle`, `roxctl`, `collector`, and `fact`, also optionally release-suffixed |
 
+For `stackrox/scanner`, the catalog has one milestone: `scanner-on-push`, `scanner-db-on-push`, `scanner-slim-on-push`, and `scanner-db-slim-on-push`. These builds are independent, as defined by the [Scanner component pipeline](https://github.com/stackrox/scanner/blob/6938eeab2b7ba5235bc4c710d56e742aab6ac52f/.tekton/scanner-component-pipeline.yaml). Failed builds can be retried together; successful or running builds receive no retry comment. StackRox's operator and retag jobs are not prerequisites in this repository. Scanner Conforma policy checks are reported without retry comments, and Conforma-dev checks are ignored.
+
 The four Scanner V2 retag jobs are independent milestone-1 producers on release branches that use them. Each consumes its own upstream Scanner image and retags it for the StackRox build. The tool checks that input before suggesting a retag retry. The operator bundle consumes all four outputs. If any of these checks is observed on the PR head, the planner requires the whole group to pass before suggesting milestone 2 or 3. If all four are absent, the group is not applicable; it does not block branches such as release-5.0.
 
 Verified against the PR-head pipeline definitions for [release-4.10](https://github.com/stackrox/stackrox/blob/a9ca9e3c2241a3c85a0bf6b17db135ebbb7c0a02/.tekton/operator-bundle-pipeline.yaml#L382) and [release-4.11](https://github.com/stackrox/stackrox/blob/b119edb5790e7879feafcd8e0199b12e625fa18c/.tekton/operator-bundle-pipeline.yaml#L382), and the [shared retag pipeline](https://github.com/stackrox/stackrox/blob/a9ca9e3c2241a3c85a0bf6b17db135ebbb7c0a02/.tekton/retag-pipeline.yaml#L160). A missing upstream Scanner release image needs attention in its producer; retrying the retag alone cannot build that source image.
@@ -133,29 +143,29 @@ The catalog and policy-name matching are in `planner.go`. Policy checks use the 
 
 ## Selection rules
 
-1. Query the PR head SHA and all pages of its check runs. For repeated check names, use the newest check-run ID, so a successful rerun supersedes an older failure.
+1. Resolve the PR head or tag to a commit SHA and query all pages of its check runs. For repeated check names, use the newest check-run ID, so a successful rerun supersedes an older failure.
 2. Check input readiness for candidate `retag-collector`, `retag-fact`, and Scanner V2 retags as described below. Suggest completed checks with conclusions `failure`, `timed_out`, `cancelled`, `stale`, or `startup_failure` in the earliest unfinished milestone. Include failed independent `checks` at the same time. Jobs within a milestone can run in parallel.
 3. Require every applicable predecessor in earlier milestones to have completed successfully before suggesting downstream jobs. Pending, missing, skipped, neutral, or action-required checks are not successful image producers and receive no retry command. Existing failures in their own milestone can still be retried.
 4. Never retry policy checks automatically. Their failures may need CVE remediation or an upstream build fix.
 5. Warn on every unknown Konflux check, even if successful. Recognize Konflux by the check-name prefix or its GitHub App name/slug. Unknown unfinished checks block milestones 2 and 3; they never become copyable commands.
-6. Skip closed or merged PRs. Continue processing other PRs after an API, registry-access, network, or requirement-resolution error, but exit with status 1. Invalid command-line arguments exit with status 2. Warnings and blocked milestones alone do not make the command fail.
+6. Skip closed or merged PRs. Continue processing other PRs or tags after an API, registry-access, network, or requirement-resolution error, but exit with status 1. Invalid command-line arguments exit with status 2. Warnings and blocked milestones alone do not make the command fail.
 
 Non-retag suggestions remain status-based. Outside the supported `wait-for-image` messages, the tool cannot distinguish a transient build failure from a reproducible code or configuration error. Repeated failures need investigation.
 
-Branches with intentionally absent producers may need a catalog adjustment: the tool withholds downstream suggestions rather than assuming that a missing image dependency is satisfied. Each invocation is a snapshot of the checks for the head commit retrieved at the start of that PR's query.
+Branches with intentionally absent producers may need a catalog adjustment: the tool withholds downstream suggestions rather than assuming that a missing image dependency is satisfied. Each report is a snapshot of the checks for the commit resolved at the start of that PR or tag query.
 
 ## Retag input readiness
 
-Before emitting a retag comment, the tool reads the PipelineRun, shared retag pipeline, Makefile recipe, and version file at the exact PR head (from the fork when applicable). It resolves the input repository and the version plus `image-tag-suffix`, including run-level suffix overrides. It never executes code from the PR.
+Before emitting a retag comment, the tool reads the PipelineRun, shared retag pipeline, Makefile recipe, and version file at the exact PR head (from the fork when applicable) or resolved tag commit. It resolves the input repository and the version plus `image-tag-suffix`, including run-level suffix overrides. It never executes code from the PR.
 
-The tool first reads the latest check's archived `wait-for-image` task from Tekton Results. It verifies the task's check-run ID, PR head SHA, PipelineRun, namespace, and exact image before using its logs. Explicit missing-image, missing-attestation, revision-mismatch, or failed-build messages justify waiting. An `Accepting this image.` message supports retrying a later failed task. A timeout alone is inconclusive.
+The tool first reads the latest check's archived `wait-for-image` task from Tekton Results. It verifies the task's check-run ID, resolved commit SHA, PipelineRun, namespace, and exact image before using its logs. Explicit missing-image, missing-attestation, revision-mismatch, or failed-build messages justify waiting. An `Accepting this image.` message supports retrying a later failed task. A timeout alone is inconclusive.
 
 Log-based decisions are labelled as inference from the latest run. They do not prove current registry state, and the task's “Image not found yet” message can also mask registry errors. If the logs are unavailable or inconclusive, the tool checks Quay directly. `--verify-pull` optionally checks image existence using the local Docker login; ambiguous access errors do not count as absence.
 
 Direct registry checks follow the consumer's [pinned wait-for-image task](https://github.com/stackrox/konflux-tasks/blob/39c045048877c4982eec677f92baac062a09a135/tasks/wait-for-image-task.yaml):
 
 1. Read the image manifest and Linux/amd64 configuration, matching the Konflux worker platform rather than the CLI host.
-2. Require `vcs-ref` and `source-location` labels. Require the PR head revision only when `source-location` exactly matches the consumer repository URL. Images from another repository, including Scanner, do not need the StackRox revision.
+2. Require `vcs-ref` and `source-location` labels. Require the resolved commit revision only when `source-location` exactly matches the consumer repository URL. Images from another repository, including Scanner, do not need the StackRox revision.
 3. Require the digest's Cosign `.att` artifact. Accept SLSA v0.2 task results only when all statuses are `Succeeded`; for SLSA v1 with Tekton Chains v2, require a successful condition on every `pipelineTask` dependency.
 
 These are the consumer's readiness checks, not cryptographic signature verification or full Conforma policy validation. The tool reads manifests, configuration, and attestations; it does not download image filesystem layers unless `--verify-pull` is enabled. It supports the two inspected task bundles ending in `cc0e455b…` and `ad73f114…`. Unknown task bundles, changed parameter wiring, or unsupported Makefile recipes withhold the retest and report a resolution error so the tool does not assume that the consumer contract is unchanged.
