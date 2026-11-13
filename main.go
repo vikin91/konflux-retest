@@ -18,8 +18,9 @@ import (
 )
 
 type options struct {
-	repo string
-	prs  []int
+	repo       string
+	prs        []int
+	verifyPull bool
 }
 
 func main() {
@@ -38,25 +39,40 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		fmt.Fprintf(diagnostics, "error: %v\n", err)
 		return 2
 	}
-	token, source, err := resolveToken(ctx, os.Getenv, savedToken)
+	token, _, err := resolveToken(ctx, os.Getenv, savedToken)
 	if err != nil {
 		fmt.Fprintf(diagnostics, "error: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(diagnostics, "GitHub authentication: %s (token value is never printed).\n", source)
 	client := githubClient{
 		baseURL: "https://api.github.com", token: token,
 		http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
 		}},
 	}
+	registry := registryClient{
+		baseURL:  "https://quay.io",
+		username: os.Getenv("QUAY_USERNAME"), password: os.Getenv("QUAY_PASSWORD"),
+		http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 || req.URL.Scheme != "https" {
+				return errors.New("unsupported registry redirect")
+			}
+			// Quay blobs can redirect to signed object-storage URLs.
+			req.Header.Del("Authorization")
+			return nil
+		}},
+	}
+	logs := &konfluxClient{http: client.http, token: konfluxTokens()}
+	checker := inputChecker{registry: registry, logs: logs.evidence}
+	if opts.verifyPull {
+		checker.pull = dockerPull
+	}
 	code := 0
 	for i, pr := range opts.prs {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		if err := reportPR(ctx, client, opts.repo, pr, out, diagnostics); err != nil {
-			fmt.Fprintf(diagnostics, "error: %s#%d: %v\n", opts.repo, pr, err)
+		if err := reportPR(ctx, client, checker, opts.repo, pr, out); err != nil {
 			code = 1
 		}
 		if ctx.Err() != nil {
@@ -70,13 +86,14 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	fs := flag.NewFlagSet("konflux-retest", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "stackrox", "repository name under stackrox, or OWNER/REPO")
+	verifyPull := fs.Bool("verify-pull", false, "optionally verify input existence with local docker pull")
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	fs.Usage = func() {
 		fmt.Fprint(diagnostics, `Usage: konflux-retest --repo stackrox --prs 2345 3456 4567
        konflux-retest --repo OWNER/REPO --prs 2345,3456,4567
 
-Prints each PR link followed immediately by retry comments or a wait/status message.
-Diagnostics go to stderr after that block.
+Prints ---, the PR link, Next action, and Warnings as one block on stdout.
+Argument and setup errors go to stderr.
 Only failed jobs in the earliest unfinished milestone are suggested. Re-run this
 command after those builds pass to get the next milestone. Nothing is posted.
 Put --repo before --prs. Duplicate PR numbers are processed once.
@@ -86,9 +103,15 @@ Authentication (first available source wins):
   2. GITHUB_TOKEN environment variable.
   3. Saved GitHub CLI login: gh auth token --hostname github.com.
      Set it up with: gh auth login --hostname github.com
-The selected source is reported on stderr; the token is never printed or saved.
-A fine-grained token needs repository access, Pull requests: read, and Checks: read.
-Only github.com is supported. No Konflux login is needed.
+Tokens are never printed or saved.
+A fine-grained token needs repository access, Pull requests: read, Checks: read,
+and Contents: read for the PR's pipeline definitions and version pins.
+Only github.com is supported. Konflux logs use a matching saved oc login.
+Retag decisions use the latest Konflux wait-for-image log when conclusive,
+otherwise registry checks (anonymous, or QUAY_USERNAME and QUAY_PASSWORD).
+Use --verify-pull before --prs to double-check with local docker pull.
+Pulling can download image layers and only verifies existence, not attestations.
+Unavailable sources remain warnings; unresolved readiness withholds the retest.
 
 Embedded milestones (StackRox pipelines):
   1. central-db-on-push, main-on-push, operator-on-push, scanner-v4-on-push,
@@ -116,7 +139,7 @@ unfinished unknown checks also block later milestones. Successful jobs are retai
 	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) {
 		return options{}, errors.New("--repo must be a repository name or OWNER/REPO")
 	}
-	opts := options{repo: repository}
+	opts := options{repo: repository, verifyPull: *verifyPull}
 	seen := make(map[int]bool)
 	for _, value := range append([]string{*firstPR}, fs.Args()...) {
 		for _, number := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {

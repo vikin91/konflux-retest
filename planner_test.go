@@ -33,18 +33,18 @@ func TestPlanRetries(t *testing.T) {
 				"roxctl-on-push":          buildCheck("roxctl-on-push", "completed", "timed_out"),
 				"operator-bundle-on-push": buildCheck("operator-bundle-on-push", "completed", "failure"),
 				"create-custom-snapshot":  buildCheck("create-custom-snapshot", "completed", "failure"),
-			}, want: []string{"roxctl-on-push"}, message: "milestone 1",
+			}, want: []string{"roxctl-on-push"},
 		},
 		"should restart independent checks alongside the current milestone": {
 			changes: map[string]checkRun{"operator-bundle-on-push": buildCheck("operator-bundle-on-push", "completed", "failure")},
 			extra:   []checkRun{buildCheck("checks", "completed", "failure")},
-			want:    []string{"checks", "operator-bundle-on-push"}, message: "milestone 2",
+			want:    []string{"checks", "operator-bundle-on-push"},
 		},
 		"should allow both consumers when the bundle passed": {
 			changes: map[string]checkRun{
 				"operator-index-on-push": buildCheck("operator-index-on-push", "completed", "failure"),
 				"create-custom-snapshot": buildCheck("create-custom-snapshot", "completed", "cancelled"),
-			}, want: []string{"operator-index-on-push", "create-custom-snapshot"}, message: "milestone 3",
+			}, want: []string{"operator-index-on-push", "create-custom-snapshot"},
 		},
 		"should wait for running producers": {
 			changes: map[string]checkRun{
@@ -126,7 +126,7 @@ func TestPlanRetries(t *testing.T) {
 				checks = append(checks, check)
 			}
 			checks = append(checks, tt.extra...)
-			got := planRetries(checks)
+			got := planRetries(checks, nil)
 			if !slices.Equal(got.jobs, tt.want) {
 				t.Fatalf("jobs = %v; want %v", got.jobs, tt.want)
 			}
@@ -138,7 +138,7 @@ func TestPlanRetries(t *testing.T) {
 }
 
 func TestPlanRetriesNoKonfluxChecks(t *testing.T) {
-	plan := planRetries(nil)
+	plan := planRetries(nil, nil)
 	if len(plan.jobs) != 0 || !strings.Contains(strings.Join(plan.messages, ""), "no Konflux checks") {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -147,7 +147,7 @@ func TestPlanRetriesNoKonfluxChecks(t *testing.T) {
 func TestPlanRetriesRecognizesKonfluxApp(t *testing.T) {
 	check := checkRun{Name: "new unprefixed job", Status: "queued"}
 	check.App.Slug = "red-hat-konflux"
-	plan := planRetries([]checkRun{check})
+	plan := planRetries([]checkRun{check}, nil)
 	if len(plan.jobs) != 0 || !strings.Contains(strings.Join(plan.messages, ""), "WARNING: unknown Konflux check") {
 		t.Fatalf("unexpected plan: %+v", plan)
 	}
@@ -167,7 +167,7 @@ func TestPlanRetriesIgnoresConformaDev(t *testing.T) {
 				}
 			}
 			checks = append(checks, buildCheck(name, "completed", "failure"))
-			plan := planRetries(checks)
+			plan := planRetries(checks, nil)
 			if !slices.Equal(plan.jobs, []string{"operator-bundle-on-push"}) {
 				t.Fatalf("ignored dev check must not block bundle retries: %v", plan.jobs)
 			}
@@ -179,7 +179,7 @@ func TestPlanRetriesIgnoresConformaDev(t *testing.T) {
 }
 
 func TestPlanRetriesDoesNotIgnoreSimilarScenarioNames(t *testing.T) {
-	plan := planRetries(append(successfulChecks(), buildCheck("acs-conforma-development / main", "completed", "failure")))
+	plan := planRetries(append(successfulChecks(), buildCheck("acs-conforma-development / main", "completed", "failure")), nil)
 	if !strings.Contains(strings.Join(plan.messages, "\n"), "WARNING: unknown Konflux check") {
 		t.Fatalf("unexpectedly ignored a different scenario: %v", plan.messages)
 	}
@@ -198,8 +198,7 @@ func TestPlanRetriesScannerRetags(t *testing.T) {
 				buildCheck("retag-scanner-slim", "completed", "failure"),
 				buildCheck("retag-scanner-db-slim", "completed", "success"),
 			},
-			want:    []string{"retag-scanner", "retag-scanner-db", "retag-scanner-slim"},
-			message: "milestone 1",
+			want: []string{"retag-scanner", "retag-scanner-db", "retag-scanner-slim"},
 		},
 		"should retry the bundle after all scanner retags pass": {
 			scannerChecks: []checkRun{
@@ -207,10 +206,10 @@ func TestPlanRetriesScannerRetags(t *testing.T) {
 				buildCheck("retag-scanner-db", "completed", "success"),
 				buildCheck("retag-scanner-slim", "completed", "success"),
 				buildCheck("retag-scanner-db-slim", "completed", "success"),
-			}, want: []string{"operator-bundle-on-push"}, message: "milestone 2",
+			}, want: []string{"operator-bundle-on-push"},
 		},
 		"should not require scanner retags on branches without them": {
-			want: []string{"operator-bundle-on-push"}, message: "milestone 2",
+			want: []string{"operator-bundle-on-push"},
 		},
 		"should wait for missing group members when one is observed": {
 			scannerChecks: []checkRun{buildCheck("retag-scanner", "completed", "success")},
@@ -245,7 +244,7 @@ func TestPlanRetriesScannerRetags(t *testing.T) {
 				}
 				checks = append(checks, check)
 			}
-			plan := planRetries(append(checks, tt.scannerChecks...))
+			plan := planRetries(append(checks, tt.scannerChecks...), nil)
 			if !slices.Equal(plan.jobs, tt.want) {
 				t.Fatalf("jobs = %v; want %v", plan.jobs, tt.want)
 			}

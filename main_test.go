@@ -16,6 +16,7 @@ func TestParseOptions(t *testing.T) {
 		want    options
 		invalid bool
 	}{
+		"should enable optional Docker verification":    {args: []string{"--verify-pull", "--prs", "23958"}, want: options{repo: "stackrox/stackrox", prs: []int{23958}, verifyPull: true}},
 		"should accept the requested syntax":            {args: []string{"--repo", "stackrox", "--prs", "2345", "3456", "4567"}, want: options{repo: "stackrox/stackrox", prs: []int{2345, 3456, 4567}}},
 		"should accept qualified repos and comma lists": {args: []string{"--repo", "other/repo", "--prs=1,2,1"}, want: options{repo: "other/repo", prs: []int{1, 2}}},
 		"should accept quoted PR lists":                 {args: []string{"--prs", "1 2"}, want: options{repo: "stackrox/stackrox", prs: []int{1, 2}}},

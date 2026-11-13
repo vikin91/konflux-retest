@@ -50,21 +50,21 @@ func TestReportPRPaginatesAndUsesCurrentHead(t *testing.T) {
 	}))
 	defer server.Close()
 	client := githubClient{baseURL: server.URL, token: "test-token", http: server.Client()}
-	var out, diagnostics strings.Builder
-	if err := reportPR(t.Context(), client, "stackrox/stackrox", 23956, &out, &diagnostics); err != nil {
+	var out strings.Builder
+	if err := reportPR(t.Context(), client, inputChecker{}, "stackrox/stackrox", 23956, &out); err != nil {
 		t.Fatal(err)
 	}
-	want := "https://github.com/stackrox/stackrox/pull/23956\n\n/konflux-retest roxctl-on-push\n"
-	if out.String() != want {
+	want := "---\nhttps://github.com/stackrox/stackrox/pull/23956\n\nNext action: Retest\n/konflux-retest roxctl-on-push\n\nWarnings:\n"
+	if !strings.HasPrefix(out.String(), want) {
 		t.Fatalf("stdout=%q; want %q", out.String(), want)
 	}
 	if pages != 2 {
 		t.Errorf("read %d pages; want 2", pages)
 	}
-	if !strings.Contains(diagnostics.String(), "policy check") || !strings.Contains(diagnostics.String(), "milestone 1") {
-		t.Fatalf("missing diagnostics: %s", diagnostics.String())
+	if !strings.Contains(out.String(), "policy check") {
+		t.Fatalf("missing diagnostics: %s", out.String())
 	}
-	if strings.Contains(diagnostics.String(), "test-token") {
+	if strings.Contains(out.String(), "test-token") {
 		t.Fatal("token exposed")
 	}
 }
@@ -86,19 +86,22 @@ func TestReportPRHandlesClosedPRAndAPIErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tt.status); fmt.Fprint(w, tt.body) }))
 			defer server.Close()
-			var out, diagnostics strings.Builder
-			err := reportPR(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, "stackrox/stackrox", 1, &out, &diagnostics)
+			var out strings.Builder
+			err := reportPR(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/stackrox", 1, &out)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if err != nil && strings.Contains(err.Error(), "sensitive-response") {
 				t.Fatal("response body exposed")
 			}
+			if strings.Count(out.String(), "Next action:") != 1 || strings.Count(out.String(), "Warnings:") != 1 || !strings.HasPrefix(out.String(), "---\n") {
+				t.Fatalf("invalid report format: %s", out.String())
+			}
 			if strings.Contains(out.String(), "/konflux-retest") {
 				t.Fatal("unexpected retry command")
 			}
-			if !strings.Contains(out.String()+diagnostics.String(), tt.message) {
-				t.Fatalf("diagnostics=%q", diagnostics.String())
+			if !strings.Contains(out.String()+out.String(), tt.message) {
+				t.Fatalf("diagnostics=%q", out.String())
 			}
 		})
 	}
@@ -112,15 +115,15 @@ func TestReportPRPrintsActionBlockBeforeDiagnostics(t *testing.T) {
 	}{
 		"should print retry comments before policy diagnostics": {
 			state: "completed", conclusion: "failure",
-			wantBlock: "/konflux-retest roxctl-on-push\n\n",
+			wantBlock: "Next action: Retest\n/konflux-retest roxctl-on-push\n\nWarnings:\n",
 		},
 		"should print wait advice before policy diagnostics": {
 			state:     "in_progress",
-			wantBlock: "Wait: milestone 1 is not ready: roxctl-on-push (in_progress). Run this tool again when the prerequisites pass.\n\n",
+			wantBlock: "Next action: Wait\nroxctl-on-push (in_progress).\n\nWarnings:\n",
 		},
 		"should print a status when build jobs passed": {
 			state: "completed", conclusion: "success",
-			wantBlock: "No build retests needed.\n\n",
+			wantBlock: "Next action: None\nNo build retests needed.\n\nWarnings:\n",
 		},
 	}
 	for name, tt := range tests {
@@ -144,10 +147,10 @@ func TestReportPRPrintsActionBlockBeforeDiagnostics(t *testing.T) {
 			// Both streams share a writer to verify the order seen in a terminal.
 			var terminal strings.Builder
 			client := githubClient{baseURL: server.URL, http: server.Client()}
-			if err := reportPR(t.Context(), client, "stackrox/stackrox", 23956, &terminal, &terminal); err != nil {
+			if err := reportPR(t.Context(), client, inputChecker{}, "stackrox/stackrox", 23956, &terminal); err != nil {
 				t.Fatal(err)
 			}
-			wantPrefix := "https://github.com/stackrox/stackrox/pull/23956\n\n" + tt.wantBlock
+			wantPrefix := "---\nhttps://github.com/stackrox/stackrox/pull/23956\n\n" + tt.wantBlock
 			if !strings.HasPrefix(terminal.String(), wantPrefix) {
 				t.Fatalf("terminal output must start with %q; got %q", wantPrefix, terminal.String())
 			}

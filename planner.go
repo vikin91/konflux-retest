@@ -31,10 +31,11 @@ var (
 type retryPlan struct {
 	jobs          []string
 	messages      []string
+	waits         []string
 	noRetryAction string
 }
 
-func planRetries(checks []checkRun) retryPlan {
+func planRetries(checks []checkRun, unavailable map[string]string) retryPlan {
 	plan := retryPlan{noRetryAction: "No build retests needed."}
 	latest := make(map[string]checkRun)
 	for _, check := range checks {
@@ -102,7 +103,12 @@ func planRetries(checks []checkRun) retryPlan {
 				blocked = append(blocked, name+" (missing)")
 			case passed(check):
 			case retryable(check):
-				retry = append(retry, name)
+				if reason := unavailable[name]; reason != "" {
+					blocked = append(blocked, name+" (input unavailable)")
+					plan.waits = append(plan.waits, name+": "+reason+".")
+				} else {
+					retry = append(retry, name)
+				}
 			default:
 				blocked = append(blocked, name+" ("+checkState(check)+")")
 			}
@@ -112,11 +118,10 @@ func planRetries(checks []checkRun) retryPlan {
 		}
 		if len(retry) > 0 {
 			plan.jobs = append(plan.jobs, retry...)
-			plan.messages = append(plan.messages, fmt.Sprintf("milestone %d: suggest %s. Wait for this milestone to pass, then run the tool again. These are status-based suggestions, not a diagnosis of the failure.", phase+1, strings.Join(retry, ", ")))
 		}
 		if len(blocked) > 0 {
-			plan.noRetryAction = fmt.Sprintf("Wait: milestone %d is not ready: %s. Run this tool again when the prerequisites pass.", phase+1, strings.Join(blocked, ", "))
-			plan.messages = append(plan.messages, fmt.Sprintf("milestone %d is not ready: %s. No commands emitted for these jobs; downstream retries are withheld.", phase+1, strings.Join(blocked, ", ")))
+			plan.noRetryAction = fmt.Sprintf("Wait: %s.", strings.Join(blocked, ", "))
+			plan.messages = append(plan.messages, fmt.Sprintf("Milestone %d is not ready: %s.", phase+1, strings.Join(blocked, ", ")))
 		}
 		break
 	}
