@@ -14,7 +14,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-**No. Running this tool does not post anything to GitHub in your name.** It does not create comments, restart jobs, or change PRs. The `/konflux-retest` lines are printed text. A restart is requested only when you choose to post a line as a PR comment yourself.
+**No. Running this tool does not post anything to GitHub in your name.** It does not create comments, restart jobs, or change PRs. The `/konflux-retest` and `/retest` lines are printed text. A restart is requested only when you choose to post a suggested command as a GitHub comment yourself.
 
 The implementation uses only HTTP `GET` requests to read PR details, tag commits, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [cmd/konflux-retest](cmd/konflux-retest); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
 
@@ -115,7 +115,17 @@ Warnings:
 Milestone 1 is not ready: main-on-push (in_progress).
 ```
 
-Post each `/konflux-retest ...` line as a separate PR comment. Verify that Konflux creates a new PipelineRun. Run the tool again after those jobs finish.
+PR suggestions use `/konflux-retest <job>`. Tag suggestions use `/retest <job> tag:<tag>` and must be posted on the linked commit, with **exactly one retest command per GitHub comment**. Multiple lines in one tag comment do not work reliably. For example, post these as two separate comments for tag `2.39.28`:
+
+```text
+/retest scanner-on-push tag:2.39.28
+```
+
+```text
+/retest scanner-slim-on-push tag:2.39.28
+```
+
+Verify that Konflux creates a new PipelineRun. Run the tool again after those jobs finish.
 
 To optionally check input existence with your local Docker login:
 
@@ -160,7 +170,7 @@ For `stackrox/scanner`, the catalog has one milestone: `scanner-on-push`, `scann
 
 For `stackrox/collector` (or `--repo collector`), the catalog has one milestone: `collector-on-push`. Its [PipelineRun](https://github.com/stackrox/collector/blob/8157bb9966cbee728fc5775e99323c33b0931a60/.tekton/collector-build.yaml) builds all architectures within one pipeline. Failed builds receive `/konflux-retest collector-on-push`; successful or running builds receive no retry comment. Collector does not require StackRox's operator or retag jobs. Conforma policy failures are reported without retries, and Conforma-dev checks are ignored. For example, run `./konflux-retest --repo collector --prs 4307`.
 
-For `stackrox/fact` (or `--repo fact`), the catalog has one milestone: `fact-on-push`, matching its [PipelineRun](https://github.com/stackrox/fact/blob/7826bed24314e774deb43ae5db1e7b30b1eda796/.tekton/fact-build.yaml). Failed builds receive `/konflux-retest fact-on-push`; running builds wait, and successful builds receive no retry comment. FACT uses its own build without StackRox job prerequisites. Conforma policy failures are reported without retries, and Conforma-dev checks are ignored. For example, run `./konflux-retest --repo stackrox/fact --tags 0.3.12`.
+For `stackrox/fact` (or `--repo fact`), the catalog has one milestone: `fact-on-push`, matching its [PipelineRun](https://github.com/stackrox/fact/blob/7826bed24314e774deb43ae5db1e7b30b1eda796/.tekton/fact-build.yaml). Failed builds receive `/konflux-retest fact-on-push` for PRs or `/retest fact-on-push tag:<tag>` for tags; running builds wait, and successful builds receive no retry comment. FACT uses its own build without StackRox job prerequisites. Conforma policy failures are reported without retries, and Conforma-dev checks are ignored. For example, run `./konflux-retest --repo stackrox/fact --tags 0.3.12`.
 
 The four Scanner V2 retag jobs are independent milestone-1 producers on release branches that use them. Each consumes its own upstream Scanner image and retags it for the StackRox build. The tool checks that input before suggesting a retag retry. The operator bundle consumes all four outputs. If any of these checks is observed on the PR head, the planner requires the whole group to pass before suggesting milestone 2 or 3. If all four are absent, the group is not applicable; it does not block branches such as release-5.0.
 

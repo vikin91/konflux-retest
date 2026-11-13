@@ -116,6 +116,8 @@ func (config Config) clients() (githubClient, inputChecker) {
 	return client, checker
 }
 
+// checkPR analyzes the open PR's head. The alternative /retest <job> branch:<branch>
+// syntax may also work for PRs, but is unverified; PR output uses /konflux-retest <job>.
 func checkPR(ctx context.Context, c githubClient, checker inputChecker, repo string, number int) (Result, error) {
 	result := Result{URL: fmt.Sprintf("https://github.com/%s/pull/%d", repo, number)}
 	var pr pullRequest

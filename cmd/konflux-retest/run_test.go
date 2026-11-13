@@ -95,7 +95,7 @@ func TestRunFactTag(t *testing.T) {
 		},
 		"should retry the failed FACT build using the short repository name": {
 			repo: "fact", status: "completed", conclusion: "failure",
-			want: "Next action: Retest\n/konflux-retest fact-on-push\n\nWarnings:\nNone.\n",
+			want: "Next action: Retest\nPost each command below as a separate GitHub comment.\n/retest fact-on-push tag:0.3.12\n\nWarnings:\nNone.\n",
 		},
 		"should preserve a successful FACT build": {
 			repo: "stackrox/fact", status: "completed", conclusion: "success",
