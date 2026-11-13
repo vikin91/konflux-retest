@@ -42,15 +42,26 @@ func TestResolveImage(t *testing.T) {
 		"should resolve collector from the PR pin":  {"retag-collector", "release-collector", "3.24.17-fast"},
 		"should resolve fact from the PR pin":       {"retag-fact", "release-fact", "0.2.17-fast"},
 	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			files := requirementFiles(t)
-			got, err := resolveImage(func(path string) ([]byte, error) { return files[path], nil }, tt.job, "https://github.com/stackrox/stackrox", "head-sha")
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got.image() != "quay.io/rhacs-eng/"+tt.repository+":"+tt.tag || got.revision != "head-sha" {
-				t.Fatalf("got %+v", got)
+	for bundle, digest := range map[string]string{
+		"cc0e455b": "cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3",
+		"ad73f114": "ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c",
+		"48cf6499": "48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef",
+	} {
+		t.Run(bundle, func(t *testing.T) {
+			for name, tt := range tests {
+				t.Run(name, func(t *testing.T) {
+					files := requirementFiles(t)
+					pipeline := string(files[".tekton/retag-pipeline.yaml"])
+					files[".tekton/retag-pipeline.yaml"] = []byte(strings.ReplaceAll(pipeline,
+						"cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3", digest))
+					got, err := resolveImage(func(path string) ([]byte, error) { return files[path], nil }, tt.job, "https://github.com/stackrox/stackrox", "head-sha")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got.image() != "quay.io/rhacs-eng/"+tt.repository+":"+tt.tag || got.revision != "head-sha" || got.sourceURL != "https://github.com/stackrox/stackrox" {
+						t.Fatalf("got %+v", got)
+					}
+				})
 			}
 		})
 	}

@@ -176,7 +176,13 @@ func validateRetagTasks(tasks []tektonTask) error {
 		_, digest, pinned := strings.Cut(ref["bundle"], "@")
 		// These bundles have identical tag-generation and readiness scripts.
 		// A new implementation needs inspection before its inputs can be approved.
-		knownBundle := digest == "sha256:cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3" || digest == "sha256:ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c"
+		knownBundle := false
+		switch digest {
+		case "sha256:cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3",
+			"sha256:ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c",
+			"sha256:48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef":
+			knownBundle = true
+		}
 		if task.TaskSpec != nil || task.TaskRef.Resolver != "bundles" || ref["name"] != contract.task || ref["kind"] != "task" || !pinned || !knownBundle {
 			return fmt.Errorf("unsupported pinned task implementation for %s; update the consumer contract before suggesting a retest", task.Name)
 		}
