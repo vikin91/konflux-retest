@@ -133,12 +133,14 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 		want       string
 		wantError  bool
 	}{
-		"should wait based on consumer log evidence":                     {evidence: logEvidence{reason: "Konflux reported image not found"}, want: "Konflux reported image not found"},
-		"should permit retry after consumer accepted input":              {evidence: logEvidence{accepted: true}},
-		"should retain evidence when Docker is unavailable":              {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, pullError: true, want: "Konflux reported image not found"},
-		"should use a confirmed local absence":                           {pull: true, pullReason: "image is missing (docker pull)", want: "image is missing (docker pull)"},
-		"should not equate a successful pull with attestation readiness": {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, want: "image pulls successfully", wantError: true},
-		"should remain uncertain without evidence":                       {want: "availability unknown", wantError: true},
+		"should wait based on consumer log evidence":                           {evidence: logEvidence{reason: "Konflux reported image not found"}, want: "Konflux reported image not found"},
+		"should permit retry after consumer accepted input":                    {evidence: logEvidence{accepted: true}},
+		"should retain evidence when Docker is unavailable":                    {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, pullError: true, want: "Konflux reported image not found"},
+		"should use a confirmed local absence":                                 {pull: true, pullReason: "image is missing (docker pull)", want: "image is missing (docker pull)"},
+		"should not equate a successful pull with attestation readiness":       {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, want: "image pulls successfully", wantError: true},
+		"should suppress registry availability errors after a successful pull": {pull: true, want: "image pulls successfully; attestation and source readiness remain unverified", wantError: true},
+		"should retain registry availability errors when Docker fails":         {pull: true, pullError: true, want: "availability unknown", wantError: true},
+		"should remain uncertain without evidence":                             {want: "availability unknown", wantError: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -161,6 +163,11 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 			}
 			if !tt.wantError && registryCalls != 0 {
 				t.Error("conclusive evidence should avoid registry access")
+			}
+			registryWarning := strings.Contains(strings.Join(warnings, "\n"), "cannot access Quay.io")
+			wantRegistryWarning := tt.wantError && (!tt.pull || tt.pullError)
+			if registryWarning != wantRegistryWarning {
+				t.Fatalf("registry warning=%v; want %v; warnings=%v", registryWarning, wantRegistryWarning, warnings)
 			}
 		})
 	}

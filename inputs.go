@@ -43,7 +43,9 @@ func (c inputChecker) check(ctx context.Context, check checkRun, requirement ima
 	if err == nil {
 		return reason, nil, nil
 	}
-	warnings = append(warnings, fmt.Sprintf("error: cannot access Quay.io to check %s: %s", requirement.image(), err))
+	if !pulled {
+		warnings = append(warnings, fmt.Sprintf("error: cannot access Quay.io to check %s: %s", requirement.image(), err))
+	}
 	if logErr != nil {
 		warnings = append(warnings, "Konflux logs unavailable: "+logErr.Error()+".")
 	}
