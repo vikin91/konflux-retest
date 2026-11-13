@@ -7,14 +7,15 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	konfluxretest "github.com/vikin91/konflux-retest"
+	"github.com/vikin91/konflux-retest/internal/refs"
 )
 
 type options struct {
@@ -45,35 +46,23 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		fmt.Fprintf(diagnostics, "error: %v\n", err)
 		return 1
 	}
-	client := githubClient{
-		baseURL: "https://api.github.com", token: token,
-		http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		}},
+	config := konfluxretest.Config{
+		GitHubToken:  token,
+		QuayUsername: os.Getenv("QUAY_USERNAME"),
+		QuayPassword: os.Getenv("QUAY_PASSWORD"),
+		KonfluxToken: konfluxTokens(),
 	}
-	registry := registryClient{
-		baseURL:  "https://quay.io",
-		username: os.Getenv("QUAY_USERNAME"), password: os.Getenv("QUAY_PASSWORD"),
-		http: &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 || req.URL.Scheme != "https" {
-				return errors.New("unsupported registry redirect")
-			}
-			// Quay blobs can redirect to signed object-storage URLs.
-			req.Header.Del("Authorization")
-			return nil
-		}},
-	}
-	logs := &konfluxClient{http: client.http, token: konfluxTokens()}
-	checker := inputChecker{registry: registry, logs: logs.evidence}
 	if opts.verifyPull {
-		checker.pull = dockerPull
+		config.PullImage = dockerPull
 	}
 	code := 0
 	for i, pr := range opts.prs {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		if err := reportPR(ctx, client, checker, opts.repo, pr, out); err != nil {
+		result, err := konfluxretest.CheckPR(ctx, config, opts.repo, pr)
+		printResult(out, result)
+		if err != nil {
 			code = 1
 		}
 		if ctx.Err() != nil {
@@ -84,7 +73,9 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		if err := reportTag(ctx, client, checker, opts.repo, tag, out); err != nil {
+		result, err := konfluxretest.CheckTag(ctx, config, opts.repo, tag)
+		printResult(out, result)
+		if err != nil {
 			code = 1
 		}
 		if ctx.Err() != nil {
@@ -158,7 +149,7 @@ scanner-db-on-push, scanner-slim-on-push, scanner-db-slim-on-push.
 	if !strings.Contains(repository, "/") {
 		repository = "stackrox/" + repository
 	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repository) {
+	if !refs.ValidRepository(repository) {
 		return options{}, errors.New("--repo must be a repository name or OWNER/REPO")
 	}
 	opts := options{repo: repository, verifyPull: *verifyPull}
@@ -166,7 +157,7 @@ scanner-db-on-push, scanner-slim-on-push, scanner-db-slim-on-push.
 		seen := make(map[string]bool)
 		for _, value := range append([]string{*firstTag}, fs.Args()...) {
 			for _, tag := range strings.FieldsFunc(value, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
-				if !validTagName(tag) {
+				if !refs.ValidTag(tag) {
 					return options{}, fmt.Errorf("invalid tag name %q; put flags before the tag list", tag)
 				}
 				if !seen[tag] {
@@ -197,21 +188,6 @@ scanner-db-on-push, scanner-slim-on-push, scanner-db-slim-on-push.
 		return options{}, errors.New("--prs must contain at least one positive PR number")
 	}
 	return opts, nil
-}
-
-// validTagName rejects ref expressions and misplaced flags while allowing tag namespaces.
-func validTagName(tag string) bool {
-	if strings.HasPrefix(tag, "-") || strings.HasSuffix(tag, ".") ||
-		strings.ContainsAny(tag, "~^:?*[\\") || strings.Contains(tag, "..") ||
-		strings.Contains(tag, "@{") || strings.ContainsFunc(tag, func(r rune) bool { return r <= ' ' || r == 127 }) {
-		return false
-	}
-	for part := range strings.SplitSeq(tag, "/") {
-		if part == "" || strings.HasPrefix(part, ".") || strings.HasSuffix(part, ".lock") {
-			return false
-		}
-	}
-	return true
 }
 
 func resolveToken(ctx context.Context, getenv func(string) string, saved func(context.Context) (string, error)) (string, string, error) {

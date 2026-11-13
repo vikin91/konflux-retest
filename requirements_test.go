@@ -1,4 +1,4 @@
-package main
+package konfluxretest
 
 import (
 	"encoding/base64"
@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -82,7 +83,7 @@ func TestResolveImageOverridesAndUnknownContracts(t *testing.T) {
 	}
 }
 
-func TestReportPRChecksRetagInputs(t *testing.T) {
+func TestCheckPRChecksRetagInputs(t *testing.T) {
 	tests := map[string]struct {
 		status           int
 		body             string
@@ -155,22 +156,21 @@ func TestReportPRChecksRetagInputs(t *testing.T) {
 				fmt.Fprint(w, data)
 			}))
 			defer registry.Close()
-			var out strings.Builder
-			err := reportPR(t.Context(), githubClient{baseURL: github.URL, token: "github-secret", http: github.Client()}, inputChecker{registry: registryClient{baseURL: registry.URL, http: registry.Client()}}, "stackrox/stackrox", 23958, &out)
+			result, err := checkPR(t.Context(), githubClient{baseURL: github.URL, token: "github-secret", http: github.Client()}, inputChecker{registry: registryClient{baseURL: registry.URL, http: registry.Client()}}, "stackrox/stackrox", 23958)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("error=%v", err)
 			}
-			if strings.Contains(out.String(), "/konflux-retest retag-scanner\n") != tt.retry {
-				t.Fatalf("unexpected scanner decision: %s", out.String())
+			if slices.Contains(result.Jobs, "retag-scanner") != tt.retry {
+				t.Fatalf("unexpected scanner decision: %s", strings.Join(result.Warnings, "\n"))
 			}
-			if !strings.Contains(out.String(), "/konflux-retest roxctl-on-push") || strings.Contains(out.String(), "/konflux-retest operator-bundle-on-push") {
-				t.Fatalf("incorrect prerequisite handling: %s", out.String())
+			if !slices.Contains(result.Jobs, "roxctl-on-push") || slices.Contains(result.Jobs, "operator-bundle-on-push") {
+				t.Fatalf("incorrect prerequisite handling: %s", strings.Join(result.Warnings, "\n"))
 			}
-			if tt.message != "" && (!strings.Contains(out.String(), tt.message) || !strings.Contains(out.String(), "quay.io/rhacs-eng/release-scanner:2.39.27-fast")) {
-				t.Fatalf("missing wait detail: %s", out.String())
+			if tt.message != "" && (!strings.Contains(strings.Join(result.Warnings, "\n"), tt.message) || !strings.Contains(strings.Join(result.Warnings, "\n"), "quay.io/rhacs-eng/release-scanner:2.39.27-fast")) {
+				t.Fatalf("missing wait detail: %s", strings.Join(result.Warnings, "\n"))
 			}
-			if !tt.retry && strings.Contains(out.String(), "suggest retag-scanner") {
-				t.Fatalf("misleading diagnostics: %s", out.String())
+			if !tt.retry && strings.Contains(strings.Join(result.Warnings, "\n"), "suggest retag-scanner") {
+				t.Fatalf("misleading diagnostics: %s", strings.Join(result.Warnings, "\n"))
 			}
 		})
 	}

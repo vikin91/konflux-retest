@@ -1,4 +1,4 @@
-package main
+package konfluxretest
 
 import (
 	"fmt"

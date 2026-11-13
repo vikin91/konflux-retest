@@ -1,4 +1,4 @@
-module konflux-retest
+module github.com/vikin91/konflux-retest
 
 go 1.26.0
 

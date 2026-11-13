@@ -1,4 +1,4 @@
-package main
+package konfluxretest
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -165,61 +166,40 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 	}
 }
 
-func TestDockerPullFailureDistinguishesMissingFromUnknown(t *testing.T) {
+func TestResultFromPlan(t *testing.T) {
 	tests := map[string]struct {
-		output  string
-		missing bool
+		plan    retryPlan
+		action  Action
+		message string
 	}{
-		"should recognize a missing manifest":                  {"Error response from daemon: manifest unknown", true},
-		"should not treat denied access as missing":            {"pull access denied, repository does not exist or may require docker login", false},
-		"should prioritize authentication over not-found text": {"unauthorized: manifest unknown", false},
-		"should not infer absence from a daemon error":         {"Cannot connect to the Docker daemon", false},
-		"should not infer absence from network failure":        {"TLS handshake timeout", false},
+		"should suggest eligible retries": {plan: retryPlan{jobs: []string{"retag-scanner"}}, action: ActionRetest},
+		"should wait for running checks":  {plan: retryPlan{noRetryAction: "Wait: main-on-push (in_progress)."}, action: ActionWait, message: "main-on-push (in_progress)."},
 	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			reason, err := dockerPullFailure([]byte(tt.output))
-			if (reason != "") != tt.missing || (err == nil) != tt.missing {
-				t.Fatalf("reason=%q error=%v", reason, err)
-			}
-		})
-	}
-}
-
-func TestPrintPlanFormat(t *testing.T) {
-	tests := map[string]struct {
-		plan retryPlan
-		want string
-	}{
-		"should print a compact retest block": {retryPlan{jobs: []string{"retag-scanner"}}, "Next action: Retest\n/konflux-retest retag-scanner\n\nWarnings:\nNone.\n"},
-		"should print a compact wait block":   {retryPlan{noRetryAction: "Wait: main-on-push (in_progress).", messages: []string{"Milestone 1 is not ready: main-on-push (in_progress)."}}, "Next action: Wait\nmain-on-push (in_progress).\n\nWarnings:\nMilestone 1 is not ready: main-on-push (in_progress).\n"},
-	}
-	for reason, action := range map[string]string{
-		"image is missing":                 "Investigate missing images",
-		"image is missing (docker pull)":   "Investigate missing images",
-		"Konflux reported image not found": "Investigate missing images",
-		"availability unknown":             "Wait",
-		"build attestation is missing":     "Wait",
+	for reason, action := range map[string]Action{
+		"image is missing":                 ActionInvestigateMissingImages,
+		"image is missing (docker pull)":   ActionInvestigateMissingImages,
+		"Konflux reported image not found": ActionInvestigateMissingImages,
+		"availability unknown":             ActionWait,
+		"build attestation is missing":     ActionWait,
 	} {
 		message := "retag-scanner: quay.io/rhacs-eng/release-scanner:2.39.27-fast: " + reason + "."
 		summary := "Waiting for usable input images."
-		if action == "Investigate missing images" {
+		if action == ActionInvestigateMissingImages {
 			summary = "Check the missing input images listed below."
 		}
 		tests["should choose action for "+reason] = struct {
-			plan retryPlan
-			want string
+			plan    retryPlan
+			action  Action
+			message string
 		}{
-			retryPlan{waits: []string{message}},
-			"Next action: " + action + "\n" + summary + "\n\nWarnings:\n" + message + "\n",
+			plan: retryPlan{waits: []string{message}}, action: action, message: summary,
 		}
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			var out strings.Builder
-			printPlan(&out, tt.plan, nil)
-			if out.String() != tt.want {
-				t.Fatalf("got %q; want %q", out.String(), tt.want)
+			result := resultFromPlan(Result{}, tt.plan, []string{"additional warning"})
+			if result.Action != tt.action || result.Message != tt.message || !slices.Equal(result.Jobs, tt.plan.jobs) || !slices.Equal(result.Warnings, slices.Concat(tt.plan.messages, tt.plan.waits, []string{"additional warning"})) {
+				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
 	}

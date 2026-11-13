@@ -16,15 +16,40 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 **No. Running this tool does not post anything to GitHub in your name.** It does not create comments, restart jobs, or change PRs. The `/konflux-retest` lines are printed text. A restart is requested only when you choose to post a line as a PR comment yourself.
 
-The implementation uses only HTTP `GET` requests to read PR details, tag commits, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [main.go](main.go); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
+The implementation uses only HTTP `GET` requests to read PR details, tag commits, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [cmd/konflux-retest](cmd/konflux-retest); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
 
 ## Build
 
 Requires Go 1.26 or newer to build. The resulting binary has no Go runtime dependencies. GitHub CLI is needed only when using its saved login instead of an environment token.
 
 ```sh
-go build -o konflux-retest .
+go build -o konflux-retest ./cmd/konflux-retest
 ```
+
+## Use from another Go project
+
+Import `github.com/vikin91/konflux-retest` as package `konfluxretest`. The root package exposes `CheckPR` and `CheckTag`; the CLI lives in `cmd/konflux-retest`.
+
+```go
+import (
+    "context"
+
+    "github.com/vikin91/konflux-retest"
+)
+
+func checkBuild(ctx context.Context, token string) (konfluxretest.Result, error) {
+    config := konfluxretest.Config{GitHubToken: token}
+    return konfluxretest.CheckPR(ctx, config, "stackrox/stackrox", 23956)
+    // For a tag, use:
+    // return konfluxretest.CheckTag(ctx, config, "stackrox/scanner", "2.39.27")
+}
+```
+
+Both functions require a full `OWNER/REPO` name and accept a context for cancellation. `Result` contains the link, resolved commit SHA, tag when resolved, next action, retry job names, explanatory message, and warnings. An error can accompany a partial result: unaffected jobs remain eligible, while jobs whose inputs could not be verified are withheld. Inspect both the result and the error.
+
+The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
+
+For local development before publishing these changes, add a `replace github.com/vikin91/konflux-retest => /path/to/konflux-retest` directive to the consuming module.
 
 ## Usage examples
 

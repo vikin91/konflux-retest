@@ -1,4 +1,4 @@
-package main
+package konfluxretest
 
 import (
 	"context"
@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 )
@@ -67,7 +65,9 @@ func (c githubClient) get(ctx context.Context, path string, target any) error {
 	if err != nil {
 		return fmt.Errorf("create GitHub request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "konflux-retest")
@@ -100,103 +100,6 @@ func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun,
 		if len(response.CheckRuns) < 100 {
 			return checks, nil
 		}
-	}
-}
-
-func reportPR(ctx context.Context, c githubClient, checker inputChecker, repo string, number int, out io.Writer) (err error) {
-	fmt.Fprintf(out, "---\nhttps://github.com/%s/pull/%d\n\n", repo, number)
-	reported := false
-	defer func() {
-		if err != nil && !reported {
-			fmt.Fprintf(out, "Next action: Wait\nCould not determine which jobs to retry.\n\nWarnings:\nerror: %v\n", err)
-		}
-	}()
-	var pr pullRequest
-	if err := c.get(ctx, fmt.Sprintf("/repos/%s/pulls/%d", repo, number), &pr); err != nil {
-		return err
-	}
-	if pr.State != "open" {
-		fmt.Fprintln(out, "Next action: None\nPR is not open.\n\nWarnings:\nNone.")
-		return nil
-	}
-	if pr.Head.SHA == "" {
-		return fmt.Errorf("GitHub returned an empty PR head SHA")
-	}
-	reported = true
-	headRepo := pr.Head.Repo.FullName
-	if headRepo == "" {
-		headRepo = repo
-	}
-	return reportCommit(ctx, c, checker, repo, headRepo, pr.Head.SHA, out)
-}
-
-// reportTag resolves the fully qualified tag ref so a same-named branch cannot
-// select a different commit. GitHub peels annotated tags through the commits API.
-func reportTag(ctx context.Context, c githubClient, checker inputChecker, repo, tag string, out io.Writer) error {
-	var commit struct {
-		SHA string `json:"sha"`
-	}
-	err := c.get(ctx, fmt.Sprintf("/repos/%s/commits/%s", repo, url.PathEscape("refs/tags/"+tag)), &commit)
-	if err == nil && commit.SHA == "" {
-		err = errors.New("GitHub returned an empty tag commit SHA")
-	}
-	if err != nil {
-		err = fmt.Errorf("resolve tag %q: %w", tag, err)
-		fmt.Fprintf(out, "---\nhttps://github.com/%s/tree/%s\n\nNext action: Wait\nCould not determine which jobs to retry.\n\nWarnings:\nerror: %v\n", repo, url.PathEscape("refs/tags/"+tag), err)
-		return err
-	}
-	fmt.Fprintf(out, "---\nhttps://github.com/%s/commit/%s\nTag: %s\n\n", repo, commit.SHA, tag)
-	return reportCommit(ctx, c, checker, repo, repo, commit.SHA, out)
-}
-
-// reportCommit shares retry planning and input checks between PR heads and tags.
-func reportCommit(ctx context.Context, c githubClient, checker inputChecker, repo, sourceRepo, sha string, out io.Writer) error {
-	checks, err := c.checks(ctx, repo, sha)
-	if err != nil {
-		fmt.Fprintf(out, "Next action: Wait\nCould not determine which jobs to retry.\n\nWarnings:\nerror: %v\n", err)
-		return err
-	}
-	plan := planRetries(repo, checks, nil)
-	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, sha, checks, plan.jobs)
-	plan = planRetries(repo, checks, unavailable)
-	printPlan(out, plan, warnings)
-	// The complete error is already in the Warnings section.
-	return inputErr
-}
-
-func printPlan(out io.Writer, plan retryPlan, warnings []string) {
-	missingImages := slices.ContainsFunc(plan.waits, func(message string) bool {
-		return strings.HasSuffix(message, ": image is missing.") ||
-			strings.HasSuffix(message, ": image is missing (docker pull).") ||
-			strings.HasSuffix(message, ": Konflux reported image not found.")
-	})
-	action := "None"
-	if len(plan.jobs) > 0 {
-		action = "Retest"
-	} else if missingImages {
-		action = "Investigate missing images"
-	} else if strings.HasPrefix(plan.noRetryAction, "Wait") || len(plan.waits) > 0 {
-		action = "Wait"
-	}
-	fmt.Fprintf(out, "Next action: %s\n", action)
-	if len(plan.jobs) > 0 {
-		for _, job := range plan.jobs {
-			fmt.Fprintf(out, "/konflux-retest %s\n", job)
-		}
-	} else if missingImages {
-		fmt.Fprintln(out, "Check the missing input images listed below.")
-	} else if len(plan.waits) > 0 {
-		fmt.Fprintln(out, "Waiting for usable input images.")
-	} else {
-		fmt.Fprintln(out, strings.TrimPrefix(plan.noRetryAction, "Wait: "))
-	}
-	fmt.Fprintln(out, "\nWarnings:")
-	messages := append(append(append([]string{}, plan.messages...), plan.waits...), warnings...)
-	if len(messages) == 0 {
-		fmt.Fprintln(out, "None.")
-	}
-	for _, message := range messages {
-		fmt.Fprintln(out, message)
 	}
 }
 

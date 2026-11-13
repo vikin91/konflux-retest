@@ -1,4 +1,4 @@
-package main
+package konfluxretest
 
 import (
 	"context"
@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestReportPRPaginatesAndUsesCurrentHead(t *testing.T) {
+func TestCheckPRPaginatesAndUsesCurrentHead(t *testing.T) {
 	pages := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "GET" {
@@ -52,33 +54,32 @@ func TestReportPRPaginatesAndUsesCurrentHead(t *testing.T) {
 	}))
 	defer server.Close()
 	client := githubClient{baseURL: server.URL, token: "test-token", http: server.Client()}
-	var out strings.Builder
-	if err := reportPR(t.Context(), client, inputChecker{}, "stackrox/stackrox", 23956, &out); err != nil {
+	result, err := checkPR(t.Context(), client, inputChecker{}, "stackrox/stackrox", 23956)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := "---\nhttps://github.com/stackrox/stackrox/pull/23956\n\nNext action: Retest\n/konflux-retest roxctl-on-push\n\nWarnings:\n"
-	if !strings.HasPrefix(out.String(), want) {
-		t.Fatalf("stdout=%q; want %q", out.String(), want)
+	if result.URL != "https://github.com/stackrox/stackrox/pull/23956" || result.SHA != "current-head" || result.Action != ActionRetest || !reflect.DeepEqual(result.Jobs, []string{"roxctl-on-push"}) {
+		t.Fatalf("unexpected result: %+v", result)
 	}
+	warnings := strings.Join(result.Warnings, "\n")
 	if pages != 2 {
 		t.Errorf("read %d pages; want 2", pages)
 	}
-	if !strings.Contains(out.String(), "policy check") {
-		t.Fatalf("missing diagnostics: %s", out.String())
+	if !strings.Contains(warnings, "policy check") {
+		t.Fatalf("missing diagnostics: %s", warnings)
 	}
-	if strings.Contains(out.String(), "test-token") {
+	if strings.Contains(warnings, "test-token") {
 		t.Fatal("token exposed")
 	}
 }
 
-func TestReportPRHandlesClosedPRAndAPIErrors(t *testing.T) {
+func TestCheckPRHandlesClosedPRAndAPIErrors(t *testing.T) {
 	tests := map[string]struct {
 		status    int
 		body      string
 		wantError bool
-		message   string
 	}{
-		"should skip closed PRs": {status: 200, body: `{"state":"closed","head":{"sha":"old-head"}}`, message: "PR is not open"},
+		"should skip closed PRs": {status: 200, body: `{"state":"closed","head":{"sha":"old-head"}}`},
 		"should report authentication failures without response contents": {status: 401, body: "sensitive-response", wantError: true},
 		"should report rate limiting without response contents":           {status: 429, body: "sensitive-response", wantError: true},
 		"should reject invalid JSON":                                      {status: 200, body: "invalid", wantError: true},
@@ -88,45 +89,35 @@ func TestReportPRHandlesClosedPRAndAPIErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(tt.status); fmt.Fprint(w, tt.body) }))
 			defer server.Close()
-			var out strings.Builder
-			err := reportPR(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/stackrox", 1, &out)
+			result, err := checkPR(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/stackrox", 1)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if err != nil && strings.Contains(err.Error(), "sensitive-response") {
 				t.Fatal("response body exposed")
 			}
-			if strings.Count(out.String(), "Next action:") != 1 || strings.Count(out.String(), "Warnings:") != 1 || !strings.HasPrefix(out.String(), "---\n") {
-				t.Fatalf("invalid report format: %s", out.String())
+			if len(result.Jobs) != 0 || result.URL != "https://github.com/stackrox/stackrox/pull/1" {
+				t.Fatalf("unexpected result: %+v", result)
 			}
-			if strings.Contains(out.String(), "/konflux-retest") {
-				t.Fatal("unexpected retry command")
+			if tt.wantError && (result.Action != ActionWait || len(result.Warnings) != 1) {
+				t.Fatalf("invalid error result: %+v", result)
 			}
-			if !strings.Contains(out.String()+out.String(), tt.message) {
-				t.Fatalf("diagnostics=%q", out.String())
+			if !tt.wantError && (result.Action != ActionNone || result.Message != "PR is not open.") {
+				t.Fatalf("unexpected closed PR result: %+v", result)
 			}
 		})
 	}
 }
 
-func TestReportPRPrintsActionBlockBeforeDiagnostics(t *testing.T) {
+func TestCheckPRReturnsActionAndPolicyWarnings(t *testing.T) {
 	tests := map[string]struct {
-		state      string
-		conclusion string
-		wantBlock  string
+		state, conclusion string
+		action            Action
+		message           string
 	}{
-		"should print retry comments before policy diagnostics": {
-			state: "completed", conclusion: "failure",
-			wantBlock: "Next action: Retest\n/konflux-retest roxctl-on-push\n\nWarnings:\n",
-		},
-		"should print wait advice before policy diagnostics": {
-			state:     "in_progress",
-			wantBlock: "Next action: Wait\nroxctl-on-push (in_progress).\n\nWarnings:\n",
-		},
-		"should print a status when build jobs passed": {
-			state: "completed", conclusion: "success",
-			wantBlock: "Next action: None\nNo build retests needed.\n\nWarnings:\n",
-		},
+		"should return retries alongside policy warnings": {state: "completed", conclusion: "failure", action: ActionRetest},
+		"should return wait advice":                       {state: "in_progress", action: ActionWait, message: "roxctl-on-push (in_progress)."},
+		"should report successful builds":                 {state: "completed", conclusion: "success", action: ActionNone, message: "No build retests needed."},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -146,24 +137,18 @@ func TestReportPRPrintsActionBlockBeforeDiagnostics(t *testing.T) {
 				json.NewEncoder(w).Encode(map[string]any{"check_runs": checks})
 			}))
 			defer server.Close()
-			// Both streams share a writer to verify the order seen in a terminal.
-			var terminal strings.Builder
-			client := githubClient{baseURL: server.URL, http: server.Client()}
-			if err := reportPR(t.Context(), client, inputChecker{}, "stackrox/stackrox", 23956, &terminal); err != nil {
+			result, err := checkPR(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/stackrox", 23956)
+			if err != nil {
 				t.Fatal(err)
 			}
-			wantPrefix := "---\nhttps://github.com/stackrox/stackrox/pull/23956\n\n" + tt.wantBlock
-			if !strings.HasPrefix(terminal.String(), wantPrefix) {
-				t.Fatalf("terminal output must start with %q; got %q", wantPrefix, terminal.String())
-			}
-			if !strings.Contains(strings.TrimPrefix(terminal.String(), wantPrefix), "policy check") {
-				t.Fatal("expected policy diagnostics after the action block")
+			if result.Action != tt.action || result.Message != tt.message || !strings.Contains(strings.Join(result.Warnings, "\n"), "policy check") {
+				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
 	}
 }
 
-func TestReportTag(t *testing.T) {
+func TestCheckTag(t *testing.T) {
 	const sha = "6938eeab2b7ba5235bc4c710d56e742aab6ac52f"
 	tests := map[string]struct {
 		tag        string
@@ -213,31 +198,25 @@ func TestReportTag(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			var out strings.Builder
-			err := reportTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/scanner", tt.tag, &out)
+			result, err := checkTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, inputChecker{}, "stackrox/scanner", tt.tag)
 			if (err != nil) != tt.wantError {
 				t.Fatalf("error=%v; wantError=%v", err, tt.wantError)
 			}
-			if strings.Count(out.String(), "Next action:") != 1 || strings.Count(out.String(), "Warnings:") != 1 {
-				t.Fatalf("invalid report: %s", out.String())
-			}
 			if tt.wantError {
-				if strings.Contains(out.String(), "/konflux-retest") || strings.Contains(out.String(), "sensitive-response") || !strings.Contains(out.String(), "Next action: Wait") {
-					t.Fatalf("invalid error report: %s", out.String())
+				if len(result.Jobs) != 0 || result.Action != ActionWait || len(result.Warnings) != 1 || strings.Contains(result.Warnings[0], "sensitive-response") {
+					t.Fatalf("invalid error result: %+v", result)
 				}
 				return
 			}
-			want := "---\nhttps://github.com/stackrox/scanner/commit/" + sha + "\nTag: " + tt.tag + "\n\n" +
-				"Next action: Retest\n/konflux-retest scanner-on-push\n/konflux-retest scanner-db-on-push\n" +
-				"/konflux-retest scanner-slim-on-push\n/konflux-retest scanner-db-slim-on-push\n\nWarnings:\nNone.\n"
-			if out.String() != want {
-				t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+			wantJobs := []string{"scanner-on-push", "scanner-db-on-push", "scanner-slim-on-push", "scanner-db-slim-on-push"}
+			if result.URL != "https://github.com/stackrox/scanner/commit/"+sha || result.Tag != tt.tag || result.SHA != sha || result.Action != ActionRetest || !slices.Equal(result.Jobs, wantJobs) || len(result.Warnings) != 0 {
+				t.Fatalf("unexpected result: %+v", result)
 			}
 		})
 	}
 }
 
-func TestReportTagChecksRetagInputsAtResolvedCommit(t *testing.T) {
+func TestCheckTagChecksRetagInputsAtResolvedCommit(t *testing.T) {
 	files := requirementFiles(t)
 	checks := successfulChecks()
 	for i := range checks {
@@ -278,12 +257,11 @@ func TestReportTagChecksRetagInputsAtResolvedCommit(t *testing.T) {
 		}
 		return logEvidence{reason: "Konflux reported image not found"}, nil
 	}}
-	var out strings.Builder
-	err := reportTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, checker, "stackrox/stackrox", "4.10.9", &out)
+	result, err := checkTag(t.Context(), githubClient{baseURL: server.URL, http: server.Client()}, checker, "stackrox/stackrox", "4.10.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !checked || !strings.Contains(out.String(), "Konflux reported image not found") || strings.Contains(out.String(), "/konflux-retest") {
-		t.Fatalf("missing inputs must withhold retag and downstream retries: %s", out.String())
+	if !checked || !strings.Contains(strings.Join(result.Warnings, "\n"), "Konflux reported image not found") || len(result.Jobs) != 0 {
+		t.Fatalf("missing inputs must withhold retag and downstream retries: %+v", result)
 	}
 }

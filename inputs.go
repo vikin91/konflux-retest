@@ -1,12 +1,8 @@
-package main
+package konfluxretest
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os/exec"
-	"strings"
-	"time"
 )
 
 type inputChecker struct {
@@ -55,30 +51,4 @@ func (c inputChecker) check(ctx context.Context, check checkRun, requirement ima
 		return "image pulls successfully; attestation and source readiness remain unverified", warnings, err
 	}
 	return "availability unknown", warnings, err
-}
-
-// dockerPull uses the local Docker login only when explicitly enabled. Ambiguous
-// access-denied responses never count as missing images, and output is not echoed.
-func dockerPull(ctx context.Context, image string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	output, err := exec.CommandContext(ctx, "docker", "pull", "--platform=linux/amd64", image).CombinedOutput()
-	if err == nil {
-		return "", nil
-	}
-	if ctx.Err() != nil {
-		return "", errors.New("docker pull timed out or was cancelled")
-	}
-	return dockerPullFailure(output)
-}
-
-func dockerPullFailure(output []byte) (string, error) {
-	text := strings.ToLower(string(output))
-	if strings.Contains(text, "unauthorized") || strings.Contains(text, "denied") || strings.Contains(text, "authentication required") {
-		return "", errors.New("docker pull could not authenticate")
-	}
-	if strings.Contains(text, "manifest unknown") || strings.Contains(text, "manifest for ") && strings.Contains(text, " not found") {
-		return "image is missing (docker pull)", nil
-	}
-	return "", errors.New("docker pull could not verify the image")
 }
