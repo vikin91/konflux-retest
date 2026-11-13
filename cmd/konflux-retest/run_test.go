@@ -82,3 +82,48 @@ func TestRunCollectorPR(t *testing.T) {
 		t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
 	}
 }
+
+func TestRunFactTag(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	const sha = "7826bed24314e774deb43ae5db1e7b30b1eda796"
+	tests := map[string]struct {
+		repo, status, conclusion, want string
+	}{
+		"should wait only for the running FACT build": {
+			repo: "stackrox/fact", status: "in_progress",
+			want: "Next action: Wait\nfact-on-push (in_progress).\n\nWarnings:\nMilestone 1 is not ready: fact-on-push (in_progress).\n",
+		},
+		"should retry the failed FACT build using the short repository name": {
+			repo: "fact", status: "completed", conclusion: "failure",
+			want: "Next action: Retest\n/konflux-retest fact-on-push\n\nWarnings:\nNone.\n",
+		},
+		"should preserve a successful FACT build": {
+			repo: "stackrox/fact", status: "completed", conclusion: "success",
+			want: "Next action: None\nNo build retests needed.\n\nWarnings:\nNone.\n",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			transport := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = transport })
+			http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				var body string
+				switch r.URL.Path {
+				case "/repos/stackrox/fact/commits/refs/tags/0.3.12":
+					body = `{"sha":"` + sha + `"}`
+				case "/repos/stackrox/fact/commits/" + sha + "/check-runs":
+					body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / fact-on-push","status":"` + tt.status + `","conclusion":"` + tt.conclusion + `"},{"id":2,"name":"Red Hat Konflux / acs-conforma-dev-4-11 / fact-4-11","status":"completed","conclusion":"cancelled"}]}`
+				default:
+					t.Fatalf("unexpected request: %s", r.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			var out, diagnostics strings.Builder
+			code := run(t.Context(), []string{"--repo", tt.repo, "--tags", "0.3.12"}, &out, &diagnostics)
+			want := "---\nhttps://github.com/stackrox/fact/commit/" + sha + "\nTag: 0.3.12\n\n" + tt.want
+			if code != 0 || diagnostics.Len() != 0 || out.String() != want {
+				t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
+			}
+		})
+	}
+}

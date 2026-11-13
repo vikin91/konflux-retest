@@ -32,6 +32,10 @@ var (
 	collectorMilestones = [][]string{
 		{"collector-on-push"},
 	}
+	// factMilestones contains the independent FACT image build.
+	factMilestones = [][]string{
+		{"fact-on-push"},
+	}
 	// policyCheck recognizes supported scenarios and components across release streams.
 	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)? / (central-db|main|operator|scanner-v4|scanner-v4-db|scanner|scanner-db|scanner-slim|scanner-db-slim|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?$`)
 )
@@ -50,6 +54,8 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		stages = scannerMilestones
 	case strings.EqualFold(repo, "stackrox/collector"):
 		stages = collectorMilestones
+	case strings.EqualFold(repo, "stackrox/fact"):
+		stages = factMilestones
 	}
 	plan := retryPlan{noRetryAction: "No build retests needed."}
 	latest := make(map[string]checkRun)
