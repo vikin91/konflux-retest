@@ -123,7 +123,7 @@ To optionally check input existence with your local Docker login:
 ./konflux-retest --verify-pull --repo stackrox --prs 23958
 ```
 
-`docker pull` can download image layers. A successful pull proves existence, not attestation or source-revision readiness. If Docker is unavailable or access is denied, the tool retains the best available log or registry evidence.
+`docker pull` can download image layers. With `--verify-pull`, a successful pull reports that the image exists and permits the retest without further input checks. Failed pulls fall back to Quay and Konflux logs with their diagnostics.
 
 ## GitHub token
 
@@ -185,9 +185,9 @@ Branches with intentionally absent producers may need a catalog adjustment: the 
 
 Before emitting a retag comment, the tool reads the PipelineRun, shared retag pipeline, Makefile recipe, and version file at the exact PR head (from the fork when applicable) or resolved tag commit. It resolves the input repository and the version plus `image-tag-suffix`, including run-level suffix overrides. It never executes code from the PR.
 
-The tool first reads the latest check's archived `wait-for-image` task from Tekton Results. It verifies the task's check-run ID, resolved commit SHA, PipelineRun, namespace, and exact image before using its logs. Explicit missing-image, missing-attestation, revision-mismatch, or failed-build messages justify waiting. An `Accepting this image.` message supports retrying a later failed task. A timeout alone is inconclusive.
+Without `--verify-pull`, the tool first reads the latest check's archived `wait-for-image` task from Tekton Results. It verifies the task's check-run ID, resolved commit SHA, PipelineRun, namespace, and exact image before using its logs. Explicit missing-image, missing-attestation, revision-mismatch, or failed-build messages justify waiting. An `Accepting this image.` message supports retrying a later failed task. A timeout alone is inconclusive.
 
-Log-based decisions are labelled as inference from the latest run. They do not prove current registry state, and the task's “Image not found yet” message can also mask registry errors. If the logs are unavailable or inconclusive, the tool checks Quay directly. `--verify-pull` optionally checks image existence using the local Docker login; ambiguous access errors do not count as absence.
+Log-based decisions are labelled as inference from the latest run. They do not prove current registry state, and the task's “Image not found yet” message can also mask registry errors. If the logs are unavailable or inconclusive, the tool checks Quay directly. `--verify-pull` checks image existence first using the local Docker login and skips registry and log checks on success; ambiguous access errors do not count as absence.
 
 Direct registry checks follow the consumer's [pinned wait-for-image task](https://github.com/stackrox/konflux-tasks/blob/39c045048877c4982eec677f92baac062a09a135/tasks/wait-for-image-task.yaml):
 

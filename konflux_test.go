@@ -126,29 +126,49 @@ func TestKonfluxDoesNotSendCredentialsToUnsupportedHosts(t *testing.T) {
 func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 	requirement := imageRequirement{repository: "quay.io/rhacs-eng/release-scanner", tag: "2.39.27-fast"}
 	tests := map[string]struct {
-		evidence   logEvidence
-		pull       bool
-		pullReason string
-		pullError  bool
-		want       string
-		wantError  bool
+		evidence      logEvidence
+		pull          bool
+		pullReason    string
+		pullError     bool
+		registryReady bool
+		want          string
+		wantError     bool
+		wantRegistry  bool
 	}{
-		"should wait based on consumer log evidence":                           {evidence: logEvidence{reason: "Konflux reported image not found"}, want: "Konflux reported image not found"},
-		"should permit retry after consumer accepted input":                    {evidence: logEvidence{accepted: true}},
-		"should retain evidence when Docker is unavailable":                    {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, pullError: true, want: "Konflux reported image not found"},
-		"should use a confirmed local absence":                                 {pull: true, pullReason: "image is missing (docker pull)", want: "image is missing (docker pull)"},
-		"should not equate a successful pull with attestation readiness":       {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, want: "image pulls successfully", wantError: true},
-		"should suppress registry availability errors after a successful pull": {pull: true, want: "image pulls successfully; attestation and source readiness remain unverified", wantError: true},
-		"should retain registry availability errors when Docker fails":         {pull: true, pullError: true, want: "availability unknown", wantError: true},
-		"should remain uncertain without evidence":                             {want: "availability unknown", wantError: true},
+		"should wait based on consumer log evidence":                                      {evidence: logEvidence{reason: "Konflux reported image not found"}, want: "Konflux reported image not found"},
+		"should permit retry after consumer accepted input":                               {evidence: logEvidence{accepted: true}},
+		"should retain evidence when Docker and Quay are unavailable":                     {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, pullError: true, want: "Konflux reported image not found", wantRegistry: true},
+		"should retain confirmed local absence when Quay is unavailable":                  {pull: true, pullReason: "image is missing (docker pull)", want: "image is missing (docker pull)", wantRegistry: true},
+		"should allow retries after a successful pull despite stale missing-image logs":   {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true},
+		"should confirm existence without registry or log access after a successful pull": {pull: true},
+		"should try Quay after Docker access fails":                                       {pull: true, pullError: true, registryReady: true, wantRegistry: true},
+		"should try Quay after Docker reports a missing image":                            {pull: true, pullReason: "image is missing (docker pull)", registryReady: true, wantRegistry: true},
+		"should report registry errors when Docker fails without log evidence":            {pull: true, pullError: true, want: "availability unknown", wantError: true, wantRegistry: true},
+		"should remain uncertain without evidence":                                        {want: "availability unknown", wantError: true, wantRegistry: true},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			registryCalls := 0
-			checker := inputChecker{logs: func(context.Context, checkRun, imageRequirement) (logEvidence, error) { return tt.evidence, nil }, registry: registryClient{baseURL: "https://quay.io", http: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-				registryCalls++
-				return &http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader("secret"))}, nil
-			})}}}
+			registryCalls, logCalls := 0, 0
+			files := registryFixture(t, "https://github.com/stackrox/scanner", "scanner-sha")
+			checker := inputChecker{
+				logs: func(context.Context, checkRun, imageRequirement) (logEvidence, error) {
+					logCalls++
+					return tt.evidence, nil
+				},
+				registry: registryClient{baseURL: "https://quay.io", http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					registryCalls++
+					status, body := http.StatusForbidden, "secret"
+					if tt.registryReady {
+						var ok bool
+						body, ok = files[r.URL.Path]
+						if !ok {
+							t.Fatalf("unexpected registry path: %s", r.URL.Path)
+						}
+						status = http.StatusOK
+					}
+					return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})}},
+			}
 			if tt.pull {
 				checker.pull = func(context.Context, string) (string, error) {
 					if tt.pullError {
@@ -158,16 +178,21 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 				}
 			}
 			reason, warnings, err := checker.check(t.Context(), checkRun{}, requirement)
-			if (err != nil) != tt.wantError || (tt.want == "" && reason != "") || !strings.Contains(reason, tt.want) {
+			if (err != nil) != tt.wantError || reason != tt.want {
 				t.Fatalf("reason=%q warnings=%v err=%v", reason, warnings, err)
 			}
-			if !tt.wantError && registryCalls != 0 {
-				t.Error("conclusive evidence should avoid registry access")
+			if (registryCalls > 0) != tt.wantRegistry {
+				t.Fatalf("registry calls=%d; want access=%v", registryCalls, tt.wantRegistry)
+			}
+			if tt.pull && !tt.pullError && tt.pullReason == "" {
+				want := []string{requirement.image() + ": image exists (docker pull)."}
+				if logCalls != 0 || !slices.Equal(warnings, want) {
+					t.Fatalf("log calls=%d warnings=%v; want %v", logCalls, warnings, want)
+				}
 			}
 			registryWarning := strings.Contains(strings.Join(warnings, "\n"), "cannot access Quay.io")
-			wantRegistryWarning := tt.wantError && (!tt.pull || tt.pullError)
-			if registryWarning != wantRegistryWarning {
-				t.Fatalf("registry warning=%v; want %v; warnings=%v", registryWarning, wantRegistryWarning, warnings)
+			if registryWarning != (tt.wantRegistry && !tt.registryReady) {
+				t.Fatalf("unexpected registry warnings: %v", warnings)
 			}
 		})
 	}

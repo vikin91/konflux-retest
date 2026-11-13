@@ -31,6 +31,7 @@ type (
 		KonfluxToken func(context.Context, string) (string, error)
 		// PullImage optionally verifies image existence. Return an empty reason on success,
 		// a nonempty reason for a confirmed unusable image, or an error if inconclusive.
+		// Success permits retries without registry or log checks; failures use those fallbacks.
 		PullImage func(ctx context.Context, image string) (reason string, err error)
 	}
 

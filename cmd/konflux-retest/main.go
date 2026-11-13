@@ -115,8 +115,9 @@ and Contents: read for tags, pipeline definitions, and version pins.
 Only github.com is supported. Konflux logs use a matching saved oc login.
 Retag decisions use the latest Konflux wait-for-image log when conclusive,
 otherwise registry checks (anonymous, or QUAY_USERNAME and QUAY_PASSWORD).
-Use --verify-pull before --prs or --tags to double-check with local docker pull.
-Pulling can download image layers and only verifies existence, not attestations.
+Use --verify-pull before --prs or --tags to check with local docker pull first.
+A successful pull confirms existence and permits retests without further input checks.
+Failed pulls fall back to registry and log checks. Pulling can download image layers.
 Unavailable sources remain warnings; unresolved readiness withholds the retest.
 
 Embedded milestones (StackRox pipelines):
