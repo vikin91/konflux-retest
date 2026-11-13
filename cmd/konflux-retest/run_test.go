@@ -58,3 +58,27 @@ func TestRunContinuesAfterLookupFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestRunCollectorPR(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	transport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = transport })
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var body string
+		switch r.URL.Path {
+		case "/repos/stackrox/collector/pulls/4307":
+			body = `{"state":"open","head":{"sha":"head"}}`
+		case "/repos/stackrox/collector/commits/head/check-runs":
+			body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / collector-on-push","status":"completed","conclusion":"failure"},{"id":2,"name":"Red Hat Konflux / acs-conforma-dev-5-0 / collector-5-0","status":"completed","conclusion":"cancelled"}]}`
+		default:
+			t.Fatalf("unexpected request: %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	var out, diagnostics strings.Builder
+	code := run(t.Context(), []string{"--repo", "collector", "--prs", "4307"}, &out, &diagnostics)
+	want := "---\nhttps://github.com/stackrox/collector/pull/4307\n\nNext action: Retest\n/konflux-retest collector-on-push\n\nWarnings:\nNone.\n"
+	if code != 0 || diagnostics.Len() != 0 || out.String() != want {
+		t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
+	}
+}

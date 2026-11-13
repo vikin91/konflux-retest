@@ -313,3 +313,67 @@ func TestPlanScannerRetries(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanCollectorRetries(t *testing.T) {
+	tests := map[string]struct {
+		repo    string
+		checks  []checkRun
+		want    []string
+		message string
+	}{
+		"should retry the Collector build without StackRox prerequisites": {
+			repo: "stackrox/collector",
+			checks: []checkRun{
+				buildCheck("collector-on-push", "completed", "failure"),
+				buildCheck("acs-conforma-dev-5-0 / collector-5-0", "completed", "cancelled"),
+			},
+			want: []string{"collector-on-push"},
+		},
+		"should preserve a successful rerun and match repository case insensitively": {
+			repo: "StackRox/Collector",
+			checks: []checkRun{
+				buildCheck("collector-on-push", "completed", "failure"),
+				{ID: 2, Name: checkPrefix + "collector-on-push", Status: "completed", Conclusion: "success"},
+			},
+		},
+		"should wait for a running build": {
+			repo: "stackrox/collector", checks: []checkRun{buildCheck("collector-on-push", "in_progress", "")},
+			message: "Milestone 1 is not ready: collector-on-push (in_progress).",
+		},
+		"should report policy failures without retrying them": {
+			repo: "stackrox/collector",
+			checks: []checkRun{
+				buildCheck("collector-on-push", "completed", "success"),
+				buildCheck("acs-conforma-prod-5-0 / collector-5-0", "completed", "failure"),
+			},
+			message: "policy check",
+		},
+		"should report a missing Collector build": {
+			repo: "stackrox/collector", checks: []checkRun{buildCheck("acs-conforma-prod / collector", "completed", "success")},
+			message: "Milestone 1 is not ready: collector-on-push (missing).",
+		},
+		"should warn about unknown Collector jobs": {
+			repo: "stackrox/collector", checks: []checkRun{buildCheck("collector-new-on-push", "completed", "failure")},
+			message: "unknown Konflux check",
+		},
+		"should keep Collector builds out of the StackRox catalog": {
+			repo: "stackrox/stackrox", checks: []checkRun{buildCheck("collector-on-push", "completed", "failure")},
+			message: "unknown Konflux check",
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			plan := planRetries(tt.repo, tt.checks, nil)
+			if !slices.Equal(plan.jobs, tt.want) {
+				t.Fatalf("jobs=%v; want %v", plan.jobs, tt.want)
+			}
+			messages := strings.Join(plan.messages, "\n")
+			if tt.message == "" && messages != "" || !strings.Contains(messages, tt.message) {
+				t.Fatalf("messages=%q; want %q", messages, tt.message)
+			}
+			if strings.EqualFold(tt.repo, "stackrox/collector") && strings.Contains(messages, "operator") {
+				t.Fatalf("Collector builds must not require StackRox jobs: %s", messages)
+			}
+		})
+	}
+}

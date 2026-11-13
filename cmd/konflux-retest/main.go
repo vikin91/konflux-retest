@@ -132,6 +132,7 @@ Missing/skipped prerequisites block later milestones. Unknown Konflux checks war
 unfinished unknown checks also block later milestones. Successful jobs are retained.
 Scanner (stackrox/scanner) uses one milestone: scanner-on-push,
 scanner-db-on-push, scanner-slim-on-push, scanner-db-slim-on-push.
+Collector (stackrox/collector) uses one milestone: collector-on-push.
 `)
 	}
 	if err := fs.Parse(args); err != nil {

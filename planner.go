@@ -28,6 +28,10 @@ var (
 	scannerMilestones = [][]string{
 		{"scanner-on-push", "scanner-db-on-push", "scanner-slim-on-push", "scanner-db-slim-on-push"},
 	}
+	// collectorMilestones contains the Collector build, including its architecture matrix.
+	collectorMilestones = [][]string{
+		{"collector-on-push"},
+	}
 	// policyCheck recognizes supported scenarios and components across release streams.
 	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)? / (central-db|main|operator|scanner-v4|scanner-v4-db|scanner|scanner-db|scanner-slim|scanner-db-slim|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?$`)
 )
@@ -41,8 +45,11 @@ type retryPlan struct {
 
 func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
 	stages := milestones
-	if strings.EqualFold(repo, "stackrox/scanner") {
+	switch {
+	case strings.EqualFold(repo, "stackrox/scanner"):
 		stages = scannerMilestones
+	case strings.EqualFold(repo, "stackrox/collector"):
+		stages = collectorMilestones
 	}
 	plan := retryPlan{noRetryAction: "No build retests needed."}
 	latest := make(map[string]checkRun)

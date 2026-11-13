@@ -1,6 +1,6 @@
 # konflux-retest
 
-Work out which failed StackRox or Scanner Konflux jobs to restart next, and print retest comments you can copy and post yourself.
+Work out which failed StackRox, Scanner, or Collector Konflux jobs to restart next, and print retest comments you can copy and post yourself.
 
 ## What problem does this solve?
 
@@ -91,7 +91,7 @@ Show help, including authentication and the embedded milestones:
 ./konflux-retest --help
 ```
 
-`--repo stackrox` means `stackrox/stackrox`. Other short names use the `stackrox` owner; an explicit `OWNER/REPO` is also accepted. The `stackrox/scanner` repository uses the Scanner job catalog; other repositories use the StackRox catalog. Choose either `--prs` or `--tags` and put other flags before the list. Both lists accept spaces or commas and process duplicate entries once.
+`--repo stackrox` means `stackrox/stackrox`. Other short names use the `stackrox` owner; an explicit `OWNER/REPO` is also accepted. The `stackrox/scanner` and `stackrox/collector` repositories use their own job catalogs; other repositories use the StackRox catalog. Choose either `--prs` or `--tags` and put other flags before the list. Both lists accept spaces or commas and process duplicate entries once.
 
 Every PR report follows this format on stdout. `Next action` is `Retest`, `Investigate missing images`, `Wait`, or `None`. Warnings appear once under `Warnings:`; argument and startup errors use stderr. No authentication banner is printed.
 
@@ -157,6 +157,8 @@ References: [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_toke
 | Policy validation; no retry comments | `acs-conforma-prod`, `acs-conforma-prod-like`, optionally suffixed with a release such as `-5-0`, for components `central-db`, `main`, `operator`, `scanner-v4`, `scanner-v4-db`, `operator-bundle`, `roxctl`, `collector`, and `fact`, also optionally release-suffixed |
 
 For `stackrox/scanner`, the catalog has one milestone: `scanner-on-push`, `scanner-db-on-push`, `scanner-slim-on-push`, and `scanner-db-slim-on-push`. These builds are independent, as defined by the [Scanner component pipeline](https://github.com/stackrox/scanner/blob/6938eeab2b7ba5235bc4c710d56e742aab6ac52f/.tekton/scanner-component-pipeline.yaml). Failed builds can be retried together; successful or running builds receive no retry comment. StackRox's operator and retag jobs are not prerequisites in this repository. Scanner Conforma policy checks are reported without retry comments, and Conforma-dev checks are ignored.
+
+For `stackrox/collector` (or `--repo collector`), the catalog has one milestone: `collector-on-push`. Its [PipelineRun](https://github.com/stackrox/collector/blob/8157bb9966cbee728fc5775e99323c33b0931a60/.tekton/collector-build.yaml) builds all architectures within one pipeline. Failed builds receive `/konflux-retest collector-on-push`; successful or running builds receive no retry comment. Collector does not require StackRox's operator or retag jobs. Conforma policy failures are reported without retries, and Conforma-dev checks are ignored. For example, run `./konflux-retest --repo collector --prs 4307`.
 
 The four Scanner V2 retag jobs are independent milestone-1 producers on release branches that use them. Each consumes its own upstream Scanner image and retags it for the StackRox build. The tool checks that input before suggesting a retag retry. The operator bundle consumes all four outputs. If any of these checks is observed on the PR head, the planner requires the whole group to pass before suggesting milestone 2 or 3. If all four are absent, the group is not applicable; it does not block branches such as release-5.0.
 
