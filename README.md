@@ -234,3 +234,28 @@ The YAML parser is `go.yaml.in/yaml/v3`, which handles Tekton's YAML anchors and
 go test -cover ./...
 go vet ./...
 ```
+
+## Run evidence for library consumers
+
+`Result.Runs` exposes latest job check IDs, status, conclusion, details URL,
+identity confidence, and planner eligibility. `Result.Advisories` exposes
+commit-scoped Conforma failures, including optional development scenarios.
+These findings do not emit policy retries.
+
+Set `Config.VerifyRunIdentity` to require original PipelineRun annotations
+matching the repository, SHA, check ID, and PR number or complete tag ref.
+This requires `KonfluxToken` access to the cluster API or Tekton Results archive.
+Missing or ambiguous metadata leaves affected jobs unknown; unrelated verified
+jobs remain usable with a partial error. The default CLI behavior is unchanged.
+Strict reads request all check runs so a newer branch build cannot hide an older
+matching tag build on the same commit.
+
+The annotation contract follows upstream
+[Pipelines-as-Code labels.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/kubeinteraction/labels.go)
+and [keys.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/apis/pipelinesascode/keys/keys.go).
+Original annotation values preserve full branch refs; sanitized labels do not.
+
+Verified run observations include `ImageURL` and `ImageDigest` from literal
+PipelineRun image results, using the API or archived record. Missing, ambiguous,
+or unverified outputs stay empty. Image output observations do not alter retry
+eligibility or confirm registry availability.

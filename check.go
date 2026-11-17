@@ -19,9 +19,12 @@ type (
 	// Config supplies credentials and optional integrations for checking builds.
 	// Its zero value uses anonymous HTTP requests without local commands or log access.
 	Config struct {
-		GitHubToken  string
-		QuayUsername string
-		QuayPassword string
+		// VerifyRunIdentity requires PipelineRun evidence matching the PR or full tag ref.
+		// Without readable evidence, affected jobs remain unknown rather than retryable.
+		VerifyRunIdentity bool
+		GitHubToken       string
+		QuayUsername      string
+		QuayPassword      string
 
 		// HTTPClient supplies transport and timeout settings. Nil uses a 30-second timeout.
 		// The client is copied; redirect policies are set to protect service credentials.
@@ -48,6 +51,27 @@ type (
 		Message  string
 		Jobs     []string
 		Warnings []string
+		// Runs exposes latest scoped job observations, including successful resets.
+		Runs []Run
+		// Advisories includes Conforma failures even outside retry prerequisites.
+		Advisories []Advisory
+		prNumber   int
+	}
+
+	// Run is stable check evidence. Eligible is assigned only by the retry planner.
+	Run struct {
+		Job                     string
+		ID                      int64
+		Status, Conclusion, URL string
+		IdentityKnown, Eligible bool
+		// ImageURL and ImageDigest come from verified PipelineRun results; empty means unavailable.
+		ImageURL, ImageDigest string
+	}
+
+	// Advisory is a policy finding for human review, not a retry or release gate.
+	Advisory struct {
+		ID                    int64
+		Name, Conclusion, URL string
 	}
 )
 
@@ -101,7 +125,7 @@ func (config Config) clients() (githubClient, inputChecker) {
 		req.Header.Del("Authorization")
 		return nil
 	}
-	client := githubClient{baseURL: "https://api.github.com", token: config.GitHubToken, http: &httpClient}
+	client := githubClient{verifyIdentity: config.VerifyRunIdentity, baseURL: "https://api.github.com", token: config.GitHubToken, http: &httpClient}
 	checker := inputChecker{
 		registry: registryClient{
 			baseURL: "https://quay.io", username: config.QuayUsername, password: config.QuayPassword,
@@ -111,6 +135,7 @@ func (config Config) clients() (githubClient, inputChecker) {
 	}
 	if config.KonfluxToken != nil {
 		logs := &konfluxClient{http: &httpClient, token: config.KonfluxToken}
+		client.identity = logs.runIdentity
 		checker.logs = logs.evidence
 	}
 	return client, checker
@@ -133,6 +158,7 @@ func checkPR(ctx context.Context, c githubClient, checker inputChecker, repo str
 		return failedResult(result, errors.New("GitHub returned an empty PR head SHA"))
 	}
 	result.SHA = pr.Head.SHA
+	result.prNumber = number
 	headRepo := pr.Head.Repo.FullName
 	if headRepo == "" {
 		headRepo = repo
@@ -164,10 +190,72 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	if err != nil {
 		return failedResult(result, err)
 	}
+	// Policy findings remain visible as commit-scoped advisories when run identity is unavailable.
+	advisoryChecks := map[string]checkRun{}
+	for _, check := range checks {
+		job := strings.TrimPrefix(check.Name, checkPrefix)
+		if isKonflux(check) && strings.HasPrefix(job, "acs-conforma-") && check.ID > advisoryChecks[job].ID {
+			advisoryChecks[job] = check
+		}
+	}
+	advisoryNames := make([]string, 0, len(advisoryChecks))
+	for name := range advisoryChecks {
+		advisoryNames = append(advisoryNames, name)
+	}
+	slices.Sort(advisoryNames)
+	for _, name := range advisoryNames {
+		check := advisoryChecks[name]
+		if check.Status == "completed" && check.Conclusion != "success" && check.Conclusion != "skipped" {
+			result.Advisories = append(result.Advisories, Advisory{ID: check.ID, Name: name, Conclusion: check.Conclusion, URL: check.DetailsURL})
+		}
+	}
+	var identityErrors []error
+	var identityWarnings []string
+	if c.verifyIdentity {
+		scoped := make([]checkRun, 0, len(checks))
+		for _, check := range checks {
+			if !isKonflux(check) {
+				continue
+			}
+			observed, identityErr := runObservation{}, errors.New("PipelineRun identity access is unavailable")
+			if c.identity != nil {
+				observed, identityErr = c.identity(ctx, check, repo, result.SHA, result.Tag, result.prNumber)
+			}
+			if identityErr != nil {
+				identityErrors = append(identityErrors, identityErr)
+				identityWarnings = append(identityWarnings, fmt.Sprintf("run %d identity unknown: %s", check.ID, identityErr))
+				check.Status = "unknown"
+				check.Conclusion = ""
+				scoped = append(scoped, check)
+			} else if observed.matches {
+				check.identityKnown = true
+				check.imageURL, check.imageDigest = observed.imageURL, observed.imageDigest
+				scoped = append(scoped, check)
+			}
+		}
+		checks = scoped
+	}
 	plan := planRetries(repo, checks, nil)
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
 	plan = planRetries(repo, checks, unavailable)
-	return resultFromPlan(result, plan, warnings), inputErr
+	result = resultFromPlan(result, plan, append(identityWarnings, warnings...))
+	latest := map[string]checkRun{}
+	for _, check := range checks {
+		if isKonflux(check) && check.ID > latest[check.Name].ID {
+			latest[check.Name] = check
+		}
+	}
+	names := make([]string, 0, len(latest))
+	for name := range latest {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		check := latest[name]
+		job := strings.TrimPrefix(name, checkPrefix)
+		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: check.DetailsURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
+	}
+	return result, errors.Join(append(identityErrors, inputErr)...)
 }
 
 func failedResult(result Result, err error) (Result, error) {

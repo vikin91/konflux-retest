@@ -14,9 +14,11 @@ import (
 
 type (
 	githubClient struct {
-		baseURL string
-		token   string
-		http    *http.Client
+		verifyIdentity bool
+		identity       func(context.Context, checkRun, string, string, string, int) (runObservation, error)
+		baseURL        string
+		token          string
+		http           *http.Client
 	}
 	pullRequest struct {
 		State string `json:"state"`
@@ -28,13 +30,15 @@ type (
 		} `json:"head"`
 	}
 	checkRun struct {
-		ID         int64     `json:"id"`
-		DetailsURL string    `json:"details_url"`
-		StartedAt  time.Time `json:"started_at"`
-		Name       string    `json:"name"`
-		Status     string    `json:"status"`
-		Conclusion string    `json:"conclusion"`
-		App        struct {
+		identityKnown         bool
+		imageURL, imageDigest string
+		ID                    int64     `json:"id"`
+		DetailsURL            string    `json:"details_url"`
+		StartedAt             time.Time `json:"started_at"`
+		Name                  string    `json:"name"`
+		Status                string    `json:"status"`
+		Conclusion            string    `json:"conclusion"`
+		App                   struct {
 			Slug string `json:"slug"`
 			Name string `json:"name"`
 		} `json:"app"`
@@ -92,7 +96,11 @@ func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun,
 		var response struct {
 			CheckRuns []checkRun `json:"check_runs"`
 		}
-		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?filter=latest&per_page=100&page=%d", repo, url.PathEscape(sha), page)
+		filter := "latest"
+		if c.verifyIdentity {
+			filter = "all"
+		}
+		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?filter=%s&per_page=100&page=%d", repo, url.PathEscape(sha), filter, page)
 		if err := c.get(ctx, path, &response); err != nil {
 			return nil, err
 		}
