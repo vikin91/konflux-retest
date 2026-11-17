@@ -108,20 +108,23 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 func (c *konfluxClient) get(ctx context.Context, address, token string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, errors.New("invalid Konflux archive request")
+		return nil, fmt.Errorf("build GET %s: %w", diagnosticURL(address), preserveCause(err, token))
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, errors.New("Konflux log network error or timeout")
+		return nil, fmt.Errorf("GET %s failed: %w", diagnosticURL(address), preserveCause(err, token))
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Konflux logs returned HTTP %d", resp.StatusCode)
+		return nil, konfluxHTTPFailure(resp, address, token)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, registryResponseLimit+1))
-	if err != nil || len(data) > registryResponseLimit {
-		return nil, errors.New("Konflux log response is incomplete or too large")
+	if err != nil {
+		return nil, fmt.Errorf("read GET %s response: %w", diagnosticURL(address), preserveCause(err, token))
+	}
+	if len(data) > registryResponseLimit {
+		return nil, fmt.Errorf("GET %s response exceeds %d bytes", diagnosticURL(address), registryResponseLimit)
 	}
 	return data, nil
 }

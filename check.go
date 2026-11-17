@@ -222,8 +222,9 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 				observed, identityErr = c.identity(ctx, check, repo, result.SHA, result.Tag, result.prNumber)
 			}
 			if identityErr != nil {
+				identityErr = fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, diagnosticURL(check.DetailsURL), identityErr)
 				identityErrors = append(identityErrors, identityErr)
-				identityWarnings = append(identityWarnings, fmt.Sprintf("run %d identity unknown: %s", check.ID, identityErr))
+				identityWarnings = append(identityWarnings, "identity unknown: "+identityErr.Error())
 				check.Status = "unknown"
 				check.Conclusion = ""
 				scoped = append(scoped, check)
@@ -255,7 +256,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		job := strings.TrimPrefix(name, checkPrefix)
 		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: check.DetailsURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
 	}
-	return result, errors.Join(append(identityErrors, inputErr)...)
+	return result, errors.Join(summarizeIdentityErrors(identityErrors), inputErr)
 }
 
 func failedResult(result Result, err error) (Result, error) {
