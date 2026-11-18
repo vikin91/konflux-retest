@@ -118,13 +118,19 @@ func TestKonfluxHTTPDiagnosticsPreserveServerMessagesAndBoundBodies(t *testing.T
 	for name, body := range map[string]string{
 		"Kubernetes status":      `{"message":"User builder cannot get pipelineruns"}`,
 		"archive string error":   `{"error":"User builder cannot get pipelineruns"}`,
+		"signed URL in message":  `{"message":"User builder cannot get pipelineruns from https://storage.example/log?sig=signed-secret#body-fragment"}`,
 		"plain text proxy error": "User builder cannot get pipelineruns",
 		"oversized error":        "User builder cannot get pipelineruns " + strings.Repeat("x", 5000),
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := konfluxHTTPFailure(&http.Response{StatusCode: 403, Body: io.NopCloser(strings.NewReader(body))}, "https://user:password@api.example/path?token=query-secret", "cluster-secret")
-			if !strings.Contains(err.Error(), "HTTP 403 (Forbidden)") || !strings.Contains(err.Error(), "User builder cannot get pipelineruns") || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "query-secret") {
+			if !strings.Contains(err.Error(), "HTTP 403 (Forbidden)") || !strings.Contains(err.Error(), "User builder cannot get pipelineruns") {
 				t.Fatalf("unhelpful or unsafe error: %v", err)
+			}
+			for _, secret := range []string{"password", "query-secret", "signed-secret", "body-fragment"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("error leaked %q: %v", secret, err)
+				}
 			}
 			if len(body) > 4096 && !strings.Contains(err.Error(), "truncated") {
 				t.Fatalf("unmarked truncation: %v", err)
@@ -136,6 +142,13 @@ func TestKonfluxHTTPDiagnosticsPreserveServerMessagesAndBoundBodies(t *testing.T
 		err := preserveCause(fmt.Errorf("request: %w", cause), "")
 		if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "password") || strings.Contains(err.Error(), "query-secret") {
 			t.Fatalf("lost cause or leaked URL: %v", err)
+		}
+	})
+	t.Run("should omit malformed redirect locations", func(t *testing.T) {
+		cause := errors.New(`failed to parse Location header "/log%ZZ?sig=signed-secret": invalid URL escape`)
+		err := preserveCause(&url.Error{Op: "Get", URL: "https://api.example/path", Err: cause}, "")
+		if !errors.Is(err, cause) || err.Error() != "invalid HTTP redirect Location header" {
+			t.Fatalf("lost cause or exposed the malformed location: %v", err)
 		}
 	})
 }

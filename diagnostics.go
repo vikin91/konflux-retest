@@ -7,9 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 )
+
+var reportedURL = regexp.MustCompile(`(?i)\bhttps?://[^\s<>"\x60]+`)
 
 type (
 	identityFailure struct {
@@ -59,13 +62,23 @@ func preserveCause(err error, token string) error {
 		visible = failure.Err
 		message = visible.Error()
 	}
-	if token != "" {
-		message = strings.ReplaceAll(message, token, "[redacted]")
+	if strings.HasPrefix(message, "failed to parse Location header ") {
+		// A malformed Location can contain credentials even when it is relative.
+		message = "invalid HTTP redirect Location header"
 	}
+	message = redactDiagnosticMessage(message, token)
 	if strings.ContainsAny(message, "\r\n\t\x1b") {
 		message = fmt.Sprintf("%q", message)
 	}
 	return &diagnosticCause{message: message, cause: err}
+}
+
+func redactDiagnosticMessage(message, token string) string {
+	message = reportedURL.ReplaceAllStringFunc(message, diagnosticURL)
+	if token != "" {
+		message = strings.ReplaceAll(message, token, "[redacted]")
+	}
+	return message
 }
 
 func konfluxHTTPFailure(response *http.Response, address, token string) error {
@@ -93,9 +106,7 @@ func konfluxHTTPFailure(response *http.Response, address, token string) error {
 	} else if !strings.HasPrefix(strings.TrimSpace(string(data)), "<") {
 		message = strings.TrimSpace(string(data))
 	}
-	if token != "" {
-		message = strings.ReplaceAll(message, token, "[redacted]")
-	}
+	message = redactDiagnosticMessage(message, token)
 	problem := fmt.Sprintf("GET %s returned HTTP %d (%s)", diagnosticURL(address), response.StatusCode, http.StatusText(response.StatusCode))
 	if message != "" {
 		problem += fmt.Sprintf(": %q", message)

@@ -33,7 +33,6 @@ const (
 
 var (
 	admissionPolicyRejection = regexp.MustCompile(`(?i)\b(?:validating)?admission[ -]?policy\b[^\r\n]*\b(denied|rejected|forbids?|forbidden)\b|\b(denied|rejected|forbidden)\b[^\r\n]*\b(?:by|because of)\s+(?:an?\s+)?(?:validating)?admission[ -]?policy\b`)
-	reportedURL              = regexp.MustCompile(`(?i)\bhttps?://[^\s<>"\x60]+`)
 	namedCredential          = regexp.MustCompile(`(?i)\b(authorization|password|[\w-]*token|client[_-]?secret|api[_-]?key)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'[^']*'|(?:(?:bearer|basic)\s+)?[^\s,;<>"'()\x60]+)`)
 	bearerCredential         = regexp.MustCompile(`(?i)\b(bearer)[ \t]+[a-z0-9._~+/=-]+`)
 	githubCredential         = regexp.MustCompile(`\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+\b`)
