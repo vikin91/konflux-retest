@@ -14,17 +14,26 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 	const image = "quay.io/rhacs-eng/release-main:observed-build-fast"
 	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for name, tc := range map[string]struct {
-		archive, legacy, mismatch, wrongPR, unverified, duplicate, structured, missingDigest, unavailable bool
+		archive, wantError                                                          string
+		legacy, mismatch, wrongPR, unverified, duplicate, structured, missingDigest bool
 	}{
 		"API results":                 {},
-		"archived legacy results":     {archive: true, legacy: true},
-		"wrong commit":                {mismatch: true},
-		"different PR":                {wrongPR: true},
+		"archived legacy results":     {archive: "valid", legacy: true},
+		"wrong commit":                {mismatch: true, wantError: "PipelineRun SHA annotation"},
+		"archive wrong commit":        {archive: "valid", mismatch: true, wantError: "PipelineRun SHA annotation"},
+		"different PR":                {archive: "valid", wrongPR: true},
+		"archive missing PR number":   {archive: "missing PR", wantError: "PR event identity unavailable"},
+		"archive malformed PR number": {archive: "malformed PR", wantError: "PR event identity unavailable"},
+		"archive multiple records":    {archive: "multiple", wantError: "records=2, more_pages=false"},
+		"archive continuation token":  {archive: "paginated", wantError: "records=1, more_pages=true"},
+		"archive missing records":     {archive: "missing", wantError: "records=0, more_pages=false"},
+		"archive malformed record":    {archive: "malformed", wantError: "decode PipelineRun identity"},
+		"archive malformed response":  {archive: "bad envelope", wantError: "decode PipelineRun archive response"},
 		"verification disabled":       {unverified: true},
 		"ambiguous output":            {duplicate: true},
 		"non-string output":           {structured: true},
 		"missing digest":              {missingDigest: true},
-		"API and archive unavailable": {unavailable: true},
+		"API and archive unavailable": {archive: "forbidden", wantError: "HTTP 403 (Forbidden)"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			const prefix = "pipelinesascode.tekton.dev/"
@@ -34,6 +43,12 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 			}
 			if tc.wrongPR {
 				a[prefix+"pull-request"] = "124"
+			}
+			switch tc.archive {
+			case "missing PR":
+				delete(a, prefix+"pull-request")
+			case "malformed PR":
+				a[prefix+"pull-request"] = "not-a-number"
 			}
 			var imageValue any = image
 			if tc.structured {
@@ -70,7 +85,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 					}
 				case "api.example.openshiftapps.com":
 					requests++
-					if tc.archive || tc.unavailable {
+					if tc.archive != "" {
 						status = http.StatusNotFound
 						value = map[string]string{}
 					} else {
@@ -78,11 +93,32 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 					}
 				case "tekton-results-tekton-results.apps.example.openshiftapps.com":
 					requests++
-					if tc.unavailable {
+					if rejection := invalidArchivePageSize(r); rejection != nil {
+						return rejection, nil
+					}
+					if !strings.Contains(r.URL.Query().Get("filter"), `data.metadata.name == "run"`) || r.URL.Query().Has("page_token") {
+						t.Fatal("unexpected archive query", r.URL.RawQuery)
+					}
+					if tc.archive == "forbidden" {
 						status = http.StatusForbidden
 						value = map[string]string{}
 					} else {
-						value = map[string]any{"records": []any{map[string]any{"data": map[string]any{"value": pipeline}}}}
+						if tc.archive == "malformed" {
+							pipeline = []byte(`{`)
+						}
+						record := map[string]any{"data": map[string]any{"value": pipeline}}
+						archive := map[string]any{"records": []any{record}}
+						switch tc.archive {
+						case "multiple":
+							archive["records"] = []any{record, record}
+						case "missing":
+							archive["records"] = []any{}
+						case "paginated":
+							archive["next_page_token"] = "another-page"
+						case "bad envelope":
+							archive["records"] = "not a list"
+						}
+						value = archive
 					}
 				default:
 					t.Fatalf("unexpected service %s", r.URL.Host)
@@ -94,12 +130,12 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(string(body))), Header: make(http.Header)}, nil
 			})}
 			result, err := CheckPR(t.Context(), Config{VerifyRunIdentity: !tc.unverified, HTTPClient: client, KonfluxToken: func(context.Context, string) (string, error) { return "fixture", nil }}, "stackrox/stackrox", 123)
-			if (err != nil) != (tc.mismatch || tc.unavailable) {
+			if tc.wantError == "" && err != nil || tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
 				t.Fatalf("observation error=%v", err)
 			}
 			if tc.wrongPR {
-				if len(result.Runs) != 0 {
-					t.Fatal("different PR returned outputs", result.Runs)
+				if len(result.Runs) != 0 || len(result.Jobs) != 0 {
+					t.Fatal("different PR contributed to retry planning", result)
 				}
 				return
 			}
@@ -107,7 +143,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 				t.Fatalf("runs=%+v", result.Runs)
 			}
 			run := result.Runs[0]
-			known := !tc.unverified && !tc.mismatch && !tc.unavailable
+			known := !tc.unverified && tc.wantError == ""
 			if run.IdentityKnown != known {
 				t.Fatalf("identity known=%t", run.IdentityKnown)
 			}
@@ -124,8 +160,14 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 			if known && !slices.Contains(result.Jobs, "main-on-push") {
 				t.Fatal("image output changed retry eligibility", result)
 			}
+			if tc.wantError != "" && (run.Status != "unknown" || run.Eligible || len(result.Jobs) != 0) {
+				t.Fatalf("unknown identity authorized a retry: %+v", result)
+			}
 			if tc.unverified && requests != 0 {
 				t.Fatal("non-strict mode read run outputs")
+			}
+			if tc.archive != "" && requests != 2 {
+				t.Fatalf("made %d Konflux requests, want one live and one archive request", requests)
 			}
 		})
 	}

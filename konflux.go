@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+const archivePageSize = "100"
+
 type (
 	konfluxClient struct {
 		http  *http.Client
@@ -54,14 +56,14 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
 	token, err := c.token(ctx, "api."+cluster)
 	if err != nil {
-		return logEvidence{}, err
+		return logEvidence{}, fmt.Errorf("Konflux log authentication for api.%s: %w", cluster, preserveCause(err, token))
 	}
 	endpoint := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/"
 	filter := `data_type in ["tekton.dev/v1.TaskRun", "tekton.dev/v1beta1.TaskRun"] && data.metadata.labels["tekton.dev/pipelineRun"] == ` + strconv.Quote(parts[3]) + ` && data.metadata.labels["tekton.dev/pipelineTask"] == "wait-for-image"`
 	if !check.StartedAt.IsZero() {
 		filter += ` && data.metadata.creationTimestamp > ` + strconv.Quote(check.StartedAt.Add(-time.Minute).UTC().Format(time.RFC3339))
 	}
-	query := url.Values{"filter": {filter}, "page_size": {"5"}}
+	query := url.Values{"filter": {filter}, "page_size": {archivePageSize}}
 	data, err := c.get(ctx, endpoint+parts[1]+"/results/-/records?"+query.Encode(), token)
 	if err != nil {
 		return logEvidence{}, err
@@ -79,7 +81,7 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 		return logEvidence{}, errors.New("invalid Konflux archive response")
 	}
 	if len(response.Records) != 1 || response.NextPageToken != "" {
-		return logEvidence{}, errors.New("latest wait-for-image log is not available unambiguously in the archive")
+		return logEvidence{}, fmt.Errorf("latest wait-for-image log is not available unambiguously in the archive: records=%d, more_pages=%t", len(response.Records), response.NextPageToken != "")
 	}
 	record := response.Records[0]
 	var task konfluxTask

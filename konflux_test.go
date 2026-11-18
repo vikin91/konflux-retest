@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,15 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func invalidArchivePageSize(r *http.Request) *http.Response {
+	size, err := strconv.Atoi(r.URL.Query().Get("page_size"))
+	if err == nil && size > 5 && size < 10000 {
+		return nil
+	}
+	body := fmt.Sprintf(`{"message":"invalid page size (%d): value must be greater than 5 and less than 10000"}`, size)
+	return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(body))}
+}
 
 func TestInterpretImageLog(t *testing.T) {
 	image := "quay.io/rhacs-eng/release-scanner:2.39.27-fast"
@@ -49,7 +59,13 @@ func TestKonfluxEvidenceBindsLatestCheckAndImage(t *testing.T) {
 		"should reject an older check run":      {"check", "latest check and PR head"},
 		"should reject another image":           {"image", "required image"},
 		"should reject another namespace":       {"namespace", "latest check and PR head"},
+		"should reject another PipelineRun":     {"pipeline", "latest check and PR head"},
 		"should reject redirected record paths": {"record", "record path"},
+		"should reject multiple records":        {"multiple", "records=2, more_pages=false"},
+		"should reject a continuation token":    {"paginated", "records=1, more_pages=true"},
+		"should reject missing records":         {"missing", "records=0, more_pages=false"},
+		"should reject malformed task data":     {"malformed", "invalid archived Konflux task"},
+		"should reject a malformed response":    {"bad envelope", "invalid Konflux archive response"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -66,6 +82,8 @@ func TestKonfluxEvidenceBindsLatestCheckAndImage(t *testing.T) {
 				task.Metadata.Labels["pipelinesascode.tekton.dev/check-run-id"] = "122"
 			case "namespace":
 				task.Metadata.Namespace = "another"
+			case "pipeline":
+				task.Metadata.Labels["tekton.dev/pipelineRun"] = "another-run"
 			case "image":
 				task.Spec.Params[0].Value = new("quay.io/rhacs-eng/release-scanner:other")
 			case "record":
@@ -75,7 +93,22 @@ func TestKonfluxEvidenceBindsLatestCheckAndImage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			records, err := json.Marshal(map[string]any{"records": []any{map[string]any{"name": recordName, "data": map[string]any{"value": raw}}}})
+			if tt.mismatch == "malformed" {
+				raw = []byte(`{`)
+			}
+			record := map[string]any{"name": recordName, "data": map[string]any{"value": raw}}
+			archive := map[string]any{"records": []any{record}}
+			switch tt.mismatch {
+			case "multiple":
+				archive["records"] = []any{record, record}
+			case "missing":
+				archive["records"] = []any{}
+			case "paginated":
+				archive["next_page_token"] = "another-page"
+			case "bad envelope":
+				archive["records"] = "not a list"
+			}
+			records, err := json.Marshal(archive)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -95,8 +128,13 @@ func TestKonfluxEvidenceBindsLatestCheckAndImage(t *testing.T) {
 					if strings.HasSuffix(r.URL.Path, "/logs/task-id") {
 						logCalls++
 						body = "INFO: Image not found yet: " + requirement.image() + ".\n"
-					} else if r.URL.Query().Get("page_size") != "5" || !strings.Contains(r.URL.Query().Get("filter"), `data.metadata.creationTimestamp > "2026-11-13T11:34:20Z"`) {
-						t.Error("archive query is not bounded by check time")
+					} else {
+						if rejection := invalidArchivePageSize(r); rejection != nil {
+							return rejection, nil
+						}
+						if !strings.Contains(r.URL.Query().Get("filter"), `data.metadata.creationTimestamp > "2026-11-13T11:34:20Z"`) || r.URL.Query().Has("page_token") {
+							t.Error("unexpected archive query", r.URL.RawQuery)
+						}
 					}
 					return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
 				})},
@@ -104,7 +142,7 @@ func TestKonfluxEvidenceBindsLatestCheckAndImage(t *testing.T) {
 			check := checkRun{ID: 123, DetailsURL: "https://konflux-ui.apps.test.openshiftapps.com/ns/rh-acs-tenant/pipelinerun/retag-scanner-run", StartedAt: time.Date(2026, 11, 13, 11, 35, 20, 0, time.UTC)}
 			evidence, err := client.evidence(t.Context(), check, requirement)
 			if tt.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.want) || logCalls != 0 {
+				if err == nil || !strings.Contains(err.Error(), tt.want) || evidence != (logEvidence{}) || logCalls != 0 {
 					t.Fatalf("evidence=%+v err=%v log calls=%d", evidence, err, logCalls)
 				}
 			} else if err != nil || evidence.reason != "Konflux reported image not found" || logCalls != 1 {

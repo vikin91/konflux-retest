@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type runObservation struct {
@@ -58,11 +59,21 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 		return runObservation{}, fmt.Errorf("PipelineRun identity authentication for api.%s returned an empty token", cluster)
 	}
 	category = "API/archive failures"
-	data, err := c.get(ctx, "https://api."+cluster+"/apis/tekton.dev/v1/namespaces/"+parts[1]+"/pipelineruns/"+parts[3], token)
+	liveTimeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		// Reserve half of the remaining caller budget for the archive when the deadline is short.
+		liveTimeout = min(liveTimeout, time.Until(deadline)/2)
+	}
+	liveCtx, cancel := context.WithTimeout(ctx, liveTimeout)
+	data, err := c.get(liveCtx, "https://api."+cluster+"/apis/tekton.dev/v1/namespaces/"+parts[1]+"/pipelineruns/"+parts[3], token)
+	cancel()
 	if err != nil {
 		apiErr := err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return runObservation{}, fmt.Errorf("PipelineRun identity lookup stopped before archive fallback: API: %w; caller: %w", apiErr, ctxErr)
+		}
 		filter := `data_type in ["tekton.dev/v1.PipelineRun", "tekton.dev/v1beta1.PipelineRun"] && data.metadata.name == ` + strconv.Quote(parts[3])
-		address := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/" + parts[1] + "/results/-/records?" + url.Values{"filter": {filter}, "page_size": {"2"}}.Encode()
+		address := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/" + parts[1] + "/results/-/records?" + url.Values{"filter": {filter}, "page_size": {archivePageSize}}.Encode()
 		data, err = c.get(ctx, address, token)
 		if err != nil {
 			return runObservation{}, fmt.Errorf("PipelineRun identity unavailable in API and archive: API: %w; archive: %w", apiErr, err)
@@ -85,8 +96,11 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 	}
 	category = "identity validation failures"
 	matches, err := matchRunIdentity(data, parts[1], parts[3], check.ID, repo, sha, tag, pr)
-	if err != nil || !matches {
-		return runObservation{}, err
+	if err != nil {
+		return runObservation{}, preserveCause(err, token)
+	}
+	if !matches {
+		return runObservation{}, nil
 	}
 	imageURL, imageDigest := pipelineImageResults(data)
 	return runObservation{matches: true, imageURL: imageURL, imageDigest: imageDigest}, nil
@@ -122,7 +136,14 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	if tag != "" {
 		return a[prefix+"event-type"] == "push" && a[prefix+"branch"] == "refs/tags/"+tag, nil
 	}
-	return a[prefix+"event-type"] == "pull_request" && a[prefix+"pull-request"] == strconv.Itoa(pr), nil
+	if a[prefix+"event-type"] != "pull_request" {
+		return false, nil
+	}
+	number, err := strconv.Atoi(a[prefix+"pull-request"])
+	if err != nil || number <= 0 || a[prefix+"pull-request"] != strconv.Itoa(number) {
+		return false, errors.New("PipelineRun PR event identity unavailable: expected a positive pull-request number")
+	}
+	return number == pr, nil
 }
 
 // pipelineImageResults preserves literal image outputs without changing retry eligibility.
