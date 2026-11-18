@@ -162,6 +162,62 @@ func TestKonfluxDoesNotSendCredentialsToUnsupportedHosts(t *testing.T) {
 	}
 }
 
+func TestKonfluxLookupPolicy(t *testing.T) {
+	const trustedCluster = "example.openshiftapps.com"
+	for name, tt := range map[string]struct {
+		appID              int64
+		cluster, namespace string
+		allowed            bool
+	}{
+		"should allow a trusted app and namespace": {42, trustedCluster, "builds", true},
+		"should deny an unapproved app":            {87, trustedCluster, "builds", false},
+		"should deny a check without an app ID":    {0, trustedCluster, "builds", false},
+		"should deny an unapproved cluster":        {42, "other.openshiftapps.com", "builds", false},
+		"should deny an unapproved namespace":      {42, trustedCluster, "other", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			policyCalls, tokenCalls, requests := 0, 0, 0
+			config := Config{
+				AllowKonfluxLookup: func(_ context.Context, appID int64, apiHost, namespace string) bool {
+					policyCalls++
+					return appID == 42 && apiHost == "api."+trustedCluster && namespace == "builds"
+				},
+				KonfluxToken: func(_ context.Context, host string) (string, error) {
+					tokenCalls++
+					if !tt.allowed || host != "api."+trustedCluster {
+						t.Fatalf("unexpected token request for %q", host)
+					}
+					return "fixture", nil
+				},
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					requests++
+					if !tt.allowed || r.Header.Get("Authorization") != "Bearer fixture" {
+						t.Fatalf("unexpected request to %q", r.URL.Host)
+					}
+					return &http.Response{StatusCode: http.StatusForbidden, Body: http.NoBody}, nil
+				})},
+			}
+			client, checker := config.clients()
+			check := checkRun{DetailsURL: "https://konflux-ui.apps." + tt.cluster + "/ns/" + tt.namespace + "/pipelinerun/build"}
+			check.App.ID = tt.appID
+			_, identityErr := client.identity(t.Context(), check, "stackrox/fact", "head", "", 1)
+			_, logErr := checker.logs(t.Context(), check, imageRequirement{})
+			want := "lookup denied by caller policy"
+			if tt.allowed {
+				want = "HTTP 403 (Forbidden)"
+			}
+			for _, err := range []error{identityErr, logErr} {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("lookup error=%v, want %q", err, want)
+				}
+			}
+			if policyCalls != 2 || (tt.allowed && (tokenCalls != 2 || requests != 3)) {
+				t.Fatalf("policy calls=%d, token calls=%d, requests=%d", policyCalls, tokenCalls, requests)
+			}
+		})
+	}
+}
+
 func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 	requirement := imageRequirement{repository: "quay.io/rhacs-eng/release-scanner", tag: "2.39.27-fast"}
 	tests := map[string]struct {

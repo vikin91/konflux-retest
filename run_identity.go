@@ -53,12 +53,9 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 	}
 	category = "authentication failures"
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
-	token, err := c.token(ctx, "api."+cluster)
+	token, err := c.tokenForRun(ctx, check.App.ID, "api."+cluster, parts[1])
 	if err != nil {
-		return runObservation{}, diagnosticError("PipelineRun identity authentication failed for api."+cluster, err)
-	}
-	if token == "" {
-		return runObservation{}, fmt.Errorf("PipelineRun identity authentication for api.%s returned an empty token", cluster)
+		return runObservation{}, err
 	}
 	category = "API/archive failures"
 	liveTimeout := 5 * time.Second

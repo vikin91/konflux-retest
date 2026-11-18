@@ -55,6 +55,11 @@ Both functions require a full `OWNER/REPO` name and accept a context for cancell
 
 The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
 
+Return a token from `KonfluxToken` only for exact cluster API hostnames you
+trust. The library uses that token for the cluster API and its Tekton Results
+route. For a hosted app, use `AllowKonfluxLookup` to check the GitHub App ID,
+API hostname, and namespace before the library requests a token.
+
 For local development, add a `replace github.com/vikin91/konflux-retest => /path/to/konflux-retest` directive to the consuming module.
 
 ## Module releases

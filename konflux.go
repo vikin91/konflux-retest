@@ -18,8 +18,9 @@ const archivePageSize = "100"
 
 type (
 	konfluxClient struct {
-		http  *http.Client
-		token func(context.Context, string) (string, error)
+		http        *http.Client
+		token       func(context.Context, string) (string, error)
+		allowLookup func(ctx context.Context, appID int64, apiHost, namespace string) bool
 	}
 	konfluxTask struct {
 		Metadata struct {
@@ -39,6 +40,21 @@ type (
 
 var konfluxName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
 
+// tokenForRun applies caller policy before accessing credentials for either Konflux endpoint.
+func (c *konfluxClient) tokenForRun(ctx context.Context, appID int64, apiHost, namespace string) (string, error) {
+	if c.allowLookup != nil && !c.allowLookup(ctx, appID, apiHost, namespace) {
+		return "", errors.New("lookup denied by caller policy")
+	}
+	token, err := c.token(ctx, apiHost)
+	if err != nil {
+		return "", diagnosticError("Konflux authentication failed for "+apiHost, err)
+	}
+	if token == "" {
+		return "", fmt.Errorf("authentication returned an empty token for %s", apiHost)
+	}
+	return token, nil
+}
+
 // evidence reads only the latest check's archived wait task, bound to its image,
 // check-run ID and head SHA. A generic timeout is not missing-image evidence.
 func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requirement imageRequirement) (logEvidence, error) {
@@ -54,9 +70,9 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 		return logEvidence{}, errors.New("check has no supported PipelineRun log URL")
 	}
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
-	token, err := c.token(ctx, "api."+cluster)
+	token, err := c.tokenForRun(ctx, check.App.ID, "api."+cluster, parts[1])
 	if err != nil {
-		return logEvidence{}, diagnosticError("Konflux log authentication failed for api."+cluster, err)
+		return logEvidence{}, err
 	}
 	endpoint := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/"
 	filter := `data_type in ["tekton.dev/v1.TaskRun", "tekton.dev/v1beta1.TaskRun"] && data.metadata.labels["tekton.dev/pipelineRun"] == ` + strconv.Quote(parts[3]) + ` && data.metadata.labels["tekton.dev/pipelineTask"] == "wait-for-image"`

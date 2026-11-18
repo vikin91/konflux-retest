@@ -29,9 +29,13 @@ type (
 		// HTTPClient supplies transport and timeout settings. Nil uses a 30-second timeout.
 		// The client is copied; redirect policies are set to protect service credentials.
 		HTTPClient *http.Client
-		// KonfluxToken returns a token for the given cluster API hostname.
-		// Nil disables log access. Errors fall back to registry checks.
+		// KonfluxToken returns a credential only for an explicitly trusted cluster API hostname.
+		// The credential also authenticates to that cluster's Tekton Results route.
+		// Nil disables Konflux access.
 		KonfluxToken func(context.Context, string) (string, error)
+		// AllowKonfluxLookup optionally authorizes a lookup before KonfluxToken runs.
+		// appID is the check's GitHub App ID, or zero if GitHub omitted it.
+		AllowKonfluxLookup func(ctx context.Context, appID int64, apiHost, namespace string) bool
 		// PullImage optionally verifies image existence. Return an empty reason on success,
 		// a nonempty reason for a confirmed unusable image, or an error if inconclusive.
 		// Use "image is missing" for confirmed absence. Reports summarize other diagnostics.
@@ -138,7 +142,7 @@ func (config Config) clients() (githubClient, inputChecker) {
 		pull: config.PullImage,
 	}
 	if config.KonfluxToken != nil {
-		logs := &konfluxClient{http: &httpClient, token: config.KonfluxToken}
+		logs := &konfluxClient{http: &httpClient, token: config.KonfluxToken, allowLookup: config.AllowKonfluxLookup}
 		client.identity = logs.runIdentity
 		checker.logs = logs.evidence
 	}

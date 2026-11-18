@@ -7,6 +7,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 1. `Result.StartFailures` reports explicit PipelineRun creation failures by check ID, job, and cluster. It distinguishes admission-policy rejection from other start failures and includes a short explanation.
+2. `Config.AllowKonfluxLookup` lets callers authorize Konflux lookups by GitHub App ID, API hostname, and namespace.
 
 ### Fixed
 
