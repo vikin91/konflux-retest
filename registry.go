@@ -263,6 +263,9 @@ func (c registryClient) get(ctx context.Context, path string) ([]byte, error) {
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, registryResponseLimit+1))
 	if err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return nil, errors.New("network error reading registry response")
 	}
 	if len(data) > registryResponseLimit {
@@ -345,6 +348,9 @@ func (c registryClient) registryToken(ctx context.Context, challenge string) (st
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, registryResponseLimit)).Decode(&result); err != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		return "", errors.New("invalid registry authentication response")
 	}
 	if result.Token != "" {

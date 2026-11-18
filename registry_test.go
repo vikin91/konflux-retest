@@ -1,16 +1,53 @@
 package konfluxretest
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+type cancelingRegistryBody struct {
+	cancel context.CancelFunc
+}
+
+func (b cancelingRegistryBody) Read([]byte) (int, error) {
+	b.cancel()
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestRegistryCancellationDuringBodyRead(t *testing.T) {
+	for name, read := range map[string]func(context.Context, registryClient) error{
+		"should preserve cancellation reading metadata": func(ctx context.Context, client registryClient) error {
+			_, err := client.get(ctx, "/v2/test/image/manifests/latest")
+			return err
+		},
+		"should preserve cancellation decoding a token": func(ctx context.Context, client registryClient) error {
+			_, err := client.registryToken(ctx, `Bearer realm="https://registry.example/token"`)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			client := registryClient{baseURL: "https://registry.example", http: &http.Client{
+				Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(cancelingRegistryBody{cancel: cancel})}, nil
+				}),
+			}}
+			if err := read(ctx, client); !errors.Is(err, context.Canceled) {
+				t.Fatalf("error = %v, want context.Canceled", err)
+			}
+		})
+	}
+}
 
 func TestAttestationReadiness(t *testing.T) {
 	v02 := func(tasks string) string {

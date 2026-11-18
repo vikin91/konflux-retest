@@ -14,6 +14,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 2. Excluded developer Conforma checks skip build identity lookup. Their failures remain visible as commit-scoped advisories without causing assessment errors or monitoring backoff.
 3. Strict assessments distinguish an empty GitHub check inventory from a commit with no verified build checks for the requested tag or PR. Lookup failures still report their causes.
 4. Konflux diagnostics redact credentials from URLs embedded in error messages and omit malformed redirect locations.
+5. Registry lookups preserve caller cancellation and deadline errors while reading image metadata or token responses.
 
 ## [0.1.0]
 
