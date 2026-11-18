@@ -11,7 +11,7 @@ const checkPrefix = "Red Hat Konflux / "
 
 var (
 	// ignoredKonfluxChecks is an arbitrary, tool-specific list of Konflux checks
-	// deliberately ignored in retry planning and diagnostics. It is not a dependency rule.
+	// deliberately excluded from build identity verification and retry planning.
 	ignoredKonfluxChecks = []*regexp.Regexp{
 		regexp.MustCompile(`^Red Hat Konflux / acs-conforma-dev(-[0-9]+-[0-9]+)? / `),
 	}
@@ -41,10 +41,11 @@ var (
 )
 
 type retryPlan struct {
-	jobs          []string
-	messages      []string
-	waits         []string
-	noRetryAction string
+	jobs             []string
+	messages         []string
+	waits            []string
+	noRetryAction    string
+	hasVerifiedBuild bool
 }
 
 func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
@@ -86,6 +87,7 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		switch {
 		case prefixed && knownJob(name, stages):
 			jobs[name] = check
+			plan.hasVerifiedBuild = plan.hasVerifiedBuild || check.identityKnown
 		case prefixed && policyCheck.MatchString(name):
 			if check.Status == "completed" && check.Conclusion != "success" && check.Conclusion != "skipped" {
 				plan.messages = append(plan.messages, fmt.Sprintf("policy check %q is %s; inspect its findings or upstream build failure; no policy retry emitted.", name, check.Conclusion))

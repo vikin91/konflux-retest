@@ -190,6 +190,11 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	if err != nil {
 		return failedResult(result, err)
 	}
+	if len(checks) == 0 {
+		result.Action = ActionWait
+		result.Message = "GitHub returned no check runs for this commit."
+		return result, nil
+	}
 	// Policy findings remain visible as commit-scoped advisories when run identity is unavailable.
 	advisoryChecks := map[string]checkRun{}
 	for _, check := range checks {
@@ -211,10 +216,11 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	}
 	var identityErrors []error
 	var identityWarnings []string
+	const noVerifiedBuild = "No verified build checks match the requested tag or PR."
 	if c.verifyIdentity {
 		scoped := make([]checkRun, 0, len(checks))
 		for _, check := range checks {
-			if !isKonflux(check) {
+			if !isKonflux(check) || ignoredKonfluxCheck(check.Name) {
 				continue
 			}
 			observed, identityErr := runObservation{}, errors.New("PipelineRun identity access is unavailable")
@@ -234,11 +240,19 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 				scoped = append(scoped, check)
 			}
 		}
+		if len(scoped) == 0 {
+			result.Action = ActionWait
+			result.Message = noVerifiedBuild
+			return result, nil
+		}
 		checks = scoped
 	}
 	plan := planRetries(repo, checks, nil)
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
 	plan = planRetries(repo, checks, unavailable)
+	if c.verifyIdentity && !plan.hasVerifiedBuild {
+		plan.noRetryAction = "Wait: " + noVerifiedBuild
+	}
 	result = resultFromPlan(result, plan, append(identityWarnings, warnings...))
 	latest := map[string]checkRun{}
 	for _, check := range checks {
