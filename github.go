@@ -34,6 +34,7 @@ type (
 		imageURL, imageDigest string
 		ID                    int64     `json:"id"`
 		DetailsURL            string    `json:"details_url"`
+		ExternalID            string    `json:"external_id"`
 		StartedAt             time.Time `json:"started_at"`
 		Name                  string    `json:"name"`
 		Status                string    `json:"status"`

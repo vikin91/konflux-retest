@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type (
@@ -14,6 +15,11 @@ type (
 	StartFailure struct {
 		CheckID int64
 		Job     string
+		// ExternalID is supplied by the GitHub App and can identify a job without identifying the triggering ref.
+		ExternalID string
+		// CheckStartedAt is GitHub's check timestamp.
+		CheckStartedAt time.Time
+
 		// Cluster is the cluster domain from the Konflux UI URL, or empty if unknown.
 		Cluster  string
 		Category StartFailureCategory
@@ -45,6 +51,7 @@ func pipelineRunStartFailure(check checkRun) *StartFailure {
 	}
 	return &StartFailure{
 		CheckID: check.ID, Job: strings.TrimPrefix(check.Name, checkPrefix),
+		ExternalID: check.ExternalID, CheckStartedAt: check.StartedAt,
 		Cluster: checkCluster(check.DetailsURL), Category: category,
 		Reason: reason,
 	}
