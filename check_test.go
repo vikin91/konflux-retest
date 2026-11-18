@@ -124,3 +124,43 @@ func TestConfigProtectsRedirectCredentials(t *testing.T) {
 		t.Fatal("insecure redirect accepted")
 	}
 }
+
+func TestRegistryRedirectPreservesDownloadURLs(t *testing.T) {
+	requests := 0
+	config := Config{HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		response := &http.Response{StatusCode: http.StatusFound, Header: make(http.Header), Body: http.NoBody}
+		if requests > 1 && (r.Header.Get("Authorization") != "" || r.Header.Get("Referer") != "") {
+			t.Fatal("unexpected headers on a registry redirect")
+		}
+		switch r.URL.Host {
+		case "quay.io":
+			if r.Header.Get("Authorization") != "Bearer fixture" {
+				t.Fatal("initial Quay request lacks authorization")
+			}
+			response.Header.Set("Location", "https://storage.example/blob?signature=first")
+		case "storage.example":
+			if r.URL.Query().Get("signature") != "first" {
+				t.Fatal("storage request lost its signature")
+			}
+			response.Header.Set("Location", "https://download.example/blob?signature=second")
+		case "download.example":
+			if r.URL.Query().Get("signature") != "second" {
+				t.Fatal("download request lost its signature")
+			}
+			response.StatusCode = http.StatusOK
+		default:
+			t.Fatalf("unexpected host %q", r.URL.Host)
+		}
+		return response, nil
+	})}}
+	_, checker := config.clients()
+	resp, err := checker.registry.request(t.Context(), "https://quay.io/v2/example/private/blobs/sha256:fixture", "Bearer fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if requests != 3 || resp.StatusCode != http.StatusOK {
+		t.Fatalf("requests=%d, status=%d", requests, resp.StatusCode)
+	}
+}

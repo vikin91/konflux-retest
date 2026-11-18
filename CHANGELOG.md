@@ -21,6 +21,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 1. Repository and retag Makefile validation reuse precompiled patterns.
 2. Retry planning reuses the initial plan when retag input checks find no unavailable inputs.
 3. Reports use normalized check links, validated image references and digests, and concise diagnostics.
+4. Registry downloads support signed storage redirects with minimal request headers.
 
 ## [0.1.0]
 

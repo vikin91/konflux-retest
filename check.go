@@ -126,6 +126,7 @@ func (config Config) clients() (githubClient, inputChecker) {
 		}
 		// Quay blobs can redirect to signed object-storage URLs.
 		req.Header.Del("Authorization")
+		req.Header.Del("Referer")
 		return nil
 	}
 	client := githubClient{verifyIdentity: config.VerifyRunIdentity, baseURL: "https://api.github.com", token: config.GitHubToken, http: &httpClient}
