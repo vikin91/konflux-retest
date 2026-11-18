@@ -30,6 +30,12 @@ go build -o konflux-retest ./cmd/konflux-retest
 
 Import `github.com/vikin91/konflux-retest` as package `konfluxretest`. The root package exposes `CheckPR` and `CheckTag`; the CLI lives in `cmd/konflux-retest`.
 
+After `v0.1.0` is published, pin it from your Go module with this command:
+
+```sh
+go get github.com/vikin91/konflux-retest@v0.1.0
+```
+
 ```go
 import (
     "context"
@@ -49,7 +55,24 @@ Both functions require a full `OWNER/REPO` name and accept a context for cancell
 
 The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
 
-For local development before publishing these changes, add a `replace github.com/vikin91/konflux-retest => /path/to/konflux-retest` directive to the consuming module.
+For local development, add a `replace github.com/vikin91/konflux-retest => /path/to/konflux-retest` directive to the consuming module.
+
+## Module releases
+
+The library's public API is the exported API of the root `konfluxretest` package, including the documented behavior of `CheckPR`, `CheckTag`, and their configuration and results. The library and CLI share the same module tag.
+
+Releases use `vMAJOR.MINOR.PATCH` Git tags. During `v0`, use minor releases for API changes, including breaking changes, and patch releases for compatible fixes. Starting at `v1.0.0`, use minor releases for compatible additions and major releases for incompatible API changes. Starting at `v2`, Go requires the major version in the module and import paths, such as `github.com/vikin91/konflux-retest/v2`. See [Go's module versioning guide](https://go.dev/doc/modules/version-numbers).
+
+See the [changelog](CHANGELOG.md) for changes in each release starting with `v0.1.0`.
+
+Run `go mod tidy -diff`, `go test ./...`, and `go vet ./...` before tagging the release commit. For `v0.1.0`, create and publish the tag from that commit:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin refs/tags/v0.1.0
+```
+
+Keep published tags immutable. Publish fixes under a new version. See [Go's module publishing guide](https://go.dev/doc/modules/publishing).
 
 ## Usage examples
 
