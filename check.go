@@ -264,7 +264,9 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	}
 	plan := planRetries(repo, checks, nil)
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
-	plan = planRetries(repo, checks, unavailable)
+	if len(unavailable) > 0 {
+		plan = planRetries(repo, checks, unavailable)
+	}
 	if c.verifyIdentity && !plan.hasVerifiedBuild {
 		plan.noRetryAction = "Wait: " + noVerifiedBuild
 	}

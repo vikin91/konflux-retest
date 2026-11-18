@@ -19,6 +19,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 1. Repository and retag Makefile validation reuse precompiled patterns.
+2. Retry planning reuses the initial plan when retag input checks find no unavailable inputs.
 
 ## [0.1.0]
 
