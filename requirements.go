@@ -38,7 +38,26 @@ type (
 			Tasks        []tektonTask  `yaml:"tasks"`
 		} `yaml:"spec"`
 	}
+	retagRecipe struct {
+		versionFile string
+		pattern     *regexp.Regexp
+	}
 )
+
+var retagRecipes = map[string]retagRecipe{
+	"scanner-tag":   newRetagRecipe("scanner-tag", "SCANNER_VERSION"),
+	"collector-tag": newRetagRecipe("collector-tag", "COLLECTOR_VERSION"),
+	"fact-tag":      newRetagRecipe("fact-tag", "FACT_VERSION"),
+}
+
+// newRetagRecipe matches a literal version-file recipe so source Makefiles need not be executed.
+func newRetagRecipe(target, versionFile string) retagRecipe {
+	return retagRecipe{
+		versionFile: versionFile,
+		pattern: regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(target) + `:[ \t]*\n\t@echo "\$\$\(cat ` +
+			regexp.QuoteMeta(versionFile) + `\)"[ \t]*\n(?:\n|\z)`),
+	}
+}
 
 // resolveImage interprets the supported retag contract without executing PR code.
 // Unknown task versions or parameter wiring fail closed instead of guessing.
@@ -88,9 +107,8 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 	if err := validateRetagTasks(pipeline.Spec.Tasks); err != nil {
 		return result, err
 	}
-	versionFiles := map[string]string{"scanner-tag": "SCANNER_VERSION", "collector-tag": "COLLECTOR_VERSION", "fact-tag": "FACT_VERSION"}
 	target := params["input-image-tag-makefile-target"]
-	versionFile, ok := versionFiles[target]
+	recipe, ok := retagRecipes[target]
 	if !ok {
 		return result, fmt.Errorf("unsupported input image Makefile target %q", target)
 	}
@@ -98,13 +116,10 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 	if err != nil {
 		return result, err
 	}
-	// Restrict interpretation to the literal version-file recipe used by StackRox.
-	// Running make here would execute arbitrary code from the PR.
-	recipe := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(target) + `:[ \t]*\n\t@echo "\$\$\(cat ` + versionFile + `\)"[ \t]*\n(?:\n|\z)`)
-	if len(recipe.FindAll(makefile, -1)) != 1 {
+	if len(recipe.pattern.FindAll(makefile, -1)) != 1 {
 		return result, fmt.Errorf("unsupported Makefile recipe for %s; cannot resolve the exact input tag", target)
 	}
-	version, err := readFile(versionFile)
+	version, err := readFile(recipe.versionFile)
 	if err != nil {
 		return result, err
 	}

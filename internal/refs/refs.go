@@ -5,9 +5,11 @@ import (
 	"strings"
 )
 
+var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
 // ValidRepository reports whether repo has the OWNER/REPO form.
 func ValidRepository(repo string) bool {
-	return regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`).MatchString(repo)
+	return repositoryPattern.MatchString(repo)
 }
 
 // ValidTag rejects ref expressions and misplaced flags while allowing tag namespaces.

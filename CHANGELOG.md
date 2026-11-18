@@ -16,6 +16,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 4. Konflux diagnostics redact credentials from URLs embedded in error messages and omit malformed redirect locations.
 5. Registry lookups preserve caller cancellation and deadline errors while reading image metadata or token responses.
 
+### Changed
+
+1. Repository and retag Makefile validation reuse precompiled patterns.
+
 ## [0.1.0]
 
 ### Added
