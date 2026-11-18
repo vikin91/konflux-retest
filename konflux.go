@@ -56,7 +56,7 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
 	token, err := c.token(ctx, "api."+cluster)
 	if err != nil {
-		return logEvidence{}, fmt.Errorf("Konflux log authentication for api.%s: %w", cluster, preserveCause(err, token))
+		return logEvidence{}, diagnosticError("Konflux log authentication failed for api."+cluster, err)
 	}
 	endpoint := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/"
 	filter := `data_type in ["tekton.dev/v1.TaskRun", "tekton.dev/v1beta1.TaskRun"] && data.metadata.labels["tekton.dev/pipelineRun"] == ` + strconv.Quote(parts[3]) + ` && data.metadata.labels["tekton.dev/pipelineTask"] == "wait-for-image"`
@@ -110,23 +110,23 @@ func (c *konfluxClient) evidence(ctx context.Context, check checkRun, requiremen
 func (c *konfluxClient) get(ctx context.Context, address, token string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build GET %s: %w", diagnosticURL(address), preserveCause(err, token))
+		return nil, errors.New("invalid Konflux request URL")
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("GET %s failed: %w", diagnosticURL(address), preserveCause(err, token))
+		return nil, diagnosticError(fmt.Sprintf("GET %s failed", reportURL(address)), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, konfluxHTTPFailure(resp, address, token)
+		return nil, fmt.Errorf("GET %s returned HTTP %d (%s)", reportURL(address), resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, registryResponseLimit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read GET %s response: %w", diagnosticURL(address), preserveCause(err, token))
+		return nil, diagnosticError(fmt.Sprintf("could not read GET %s response", reportURL(address)), err)
 	}
 	if len(data) > registryResponseLimit {
-		return nil, fmt.Errorf("GET %s response exceeds %d bytes", diagnosticURL(address), registryResponseLimit)
+		return nil, fmt.Errorf("GET %s response exceeds %d bytes", reportURL(address), registryResponseLimit)
 	}
 	return data, nil
 }

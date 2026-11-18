@@ -94,6 +94,15 @@ func TestResolveImageOverridesAndUnknownContracts(t *testing.T) {
 	}
 }
 
+func TestResolveImageReportsFilenameForInvalidYAML(t *testing.T) {
+	_, err := resolveImage(func(string) ([]byte, error) {
+		return []byte("kind: *fixture-private-anchor\n"), nil
+	}, "retag-scanner", "https://github.com/stackrox/stackrox", "head")
+	if err == nil || err.Error() != "could not parse .tekton/retag-scanner.yaml" {
+		t.Fatalf("unexpected YAML diagnostic: %v", err)
+	}
+}
+
 func TestCheckPRChecksRetagInputs(t *testing.T) {
 	tests := map[string]struct {
 		status           int

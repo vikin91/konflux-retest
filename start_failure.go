@@ -1,11 +1,9 @@
 package konfluxretest
 
 import (
-	"cmp"
 	"net/url"
 	"regexp"
 	"strings"
-	"unicode"
 )
 
 type (
@@ -19,7 +17,7 @@ type (
 		// Cluster is the cluster domain from the Konflux UI URL, or empty if unknown.
 		Cluster  string
 		Category StartFailureCategory
-		// Reason is the reported diagnostic with credentials redacted.
+		// Reason summarizes the creation failure for the report.
 		Reason string
 	}
 )
@@ -31,32 +29,24 @@ const (
 	StartFailureOther StartFailureCategory = "other"
 )
 
-var (
-	admissionPolicyRejection = regexp.MustCompile(`(?i)\b(?:validating)?admission[ -]?policy\b[^\r\n]*\b(denied|rejected|forbids?|forbidden)\b|\b(denied|rejected|forbidden)\b[^\r\n]*\b(?:by|because of)\s+(?:an?\s+)?(?:validating)?admission[ -]?policy\b`)
-	namedCredential          = regexp.MustCompile(`(?i)\b(authorization|password|[\w-]*token|client[_-]?secret|api[_-]?key)["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'[^']*'|(?:(?:bearer|basic)\s+)?[^\s,;<>"'()\x60]+)`)
-	bearerCredential         = regexp.MustCompile(`(?i)\b(bearer)[ \t]+[a-z0-9._~+/=-]+`)
-	githubCredential         = regexp.MustCompile(`\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]+\b`)
-)
+var admissionPolicyRejection = regexp.MustCompile(`(?i)\b(?:validating)?admission[ -]?policy\b[^\r\n]*\b(denied|rejected|forbids?|forbidden)\b|\b(denied|rejected|forbidden)\b[^\r\n]*\b(?:by|because of)\s+(?:an?\s+)?(?:validating)?admission[ -]?policy\b`)
 
-func pipelineRunStartFailure(check checkRun, secrets ...string) *StartFailure {
+func pipelineRunStartFailure(check checkRun) *StartFailure {
 	if !isKonflux(check) || check.Status != "completed" ||
 		(check.Conclusion != "failure" && check.Conclusion != "startup_failure") ||
 		!strings.EqualFold(strings.TrimSpace(check.Output.Title), "pipelinerun start failure") {
 		return nil
 	}
-	text, summary := strings.TrimSpace(check.Output.Text), strings.TrimSpace(check.Output.Summary)
-	reason := cmp.Or(text, summary, strings.TrimSpace(check.Output.Title))
+	reason := "See the GitHub check for the PipelineRun creation failure."
 	category := StartFailureOther
-	switch {
-	case admissionPolicyRejection.MatchString(text):
+	if admissionPolicyRejection.MatchString(check.Output.Text) || admissionPolicyRejection.MatchString(check.Output.Summary) {
 		category = StartFailureAdmissionPolicy
-	case admissionPolicyRejection.MatchString(summary):
-		category, reason = StartFailureAdmissionPolicy, summary
+		reason = "An admission policy denied PipelineRun creation."
 	}
 	return &StartFailure{
 		CheckID: check.ID, Job: strings.TrimPrefix(check.Name, checkPrefix),
 		Cluster: checkCluster(check.DetailsURL), Category: category,
-		Reason: redactStartFailureReason(reason, secrets),
+		Reason: reason,
 	}
 }
 
@@ -76,23 +66,4 @@ func checkCluster(address string) string {
 		}
 	}
 	return cluster
-}
-
-func redactStartFailureReason(reason string, secrets []string) string {
-	reason = reportedURL.ReplaceAllStringFunc(reason, diagnosticURL)
-	reason = namedCredential.ReplaceAllString(reason, "${1}=[redacted]")
-	reason = bearerCredential.ReplaceAllString(reason, "${1} [redacted]")
-	reason = githubCredential.ReplaceAllString(reason, "[redacted]")
-	for _, secret := range secrets {
-		if secret != "" {
-			reason = strings.ReplaceAll(reason, secret, "[redacted]")
-		}
-	}
-	reason = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf) {
-			return ' '
-		}
-		return r
-	}, reason)
-	return strings.Join(strings.Fields(reason), " ")
 }

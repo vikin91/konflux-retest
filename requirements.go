@@ -70,7 +70,7 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 			return document, err
 		}
 		if err := yaml.Unmarshal(data, &document); err != nil {
-			return document, fmt.Errorf("decode %s: %w", path, err)
+			return document, fmt.Errorf("could not parse %s", path)
 		}
 		return document, nil
 	}
@@ -96,7 +96,7 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 	}
 	overrides, err := paramValues(run.Spec.Params)
 	if err != nil {
-		return result, err
+		return result, fmt.Errorf("invalid parameters in .tekton/%s.yaml: %w", job, err)
 	}
 	for name, value := range overrides {
 		params[name] = value
@@ -105,12 +105,12 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 		return result, errors.New("unsupported retag source repository or revision binding")
 	}
 	if err := validateRetagTasks(pipeline.Spec.Tasks); err != nil {
-		return result, err
+		return result, fmt.Errorf("invalid .tekton/retag-pipeline.yaml: %w", err)
 	}
 	target := params["input-image-tag-makefile-target"]
 	recipe, ok := retagRecipes[target]
 	if !ok {
-		return result, fmt.Errorf("unsupported input image Makefile target %q", target)
+		return result, errors.New("unsupported input image Makefile target")
 	}
 	makefile, err := readFile("Makefile")
 	if err != nil {
@@ -141,7 +141,7 @@ func paramValues(params []tektonParam) (map[string]string, error) {
 	values := make(map[string]string)
 	for _, param := range params {
 		if _, exists := values[param.Name]; exists || param.Value == nil {
-			return nil, fmt.Errorf("duplicate or nonliteral Tekton parameter %q", param.Name)
+			return nil, errors.New("duplicate or nonliteral Tekton parameter")
 		}
 		values[param.Name] = *param.Value
 	}

@@ -260,10 +260,10 @@ go vet ./...
 
 ## Run evidence for library consumers
 
-`Result.Runs` exposes latest job check IDs, status, conclusion, details URL,
-identity confidence, and planner eligibility. `Result.Advisories` exposes
-commit-scoped Conforma failures, including optional development scenarios.
-These findings do not emit policy retries.
+`Result.Runs` exposes latest job check IDs, status, conclusion, an HTTPS details
+link when available, identity confidence, and planner eligibility.
+`Result.Advisories` exposes commit-scoped Conforma failures, including optional
+development scenarios. These findings do not emit policy retries.
 
 Set `Config.VerifyRunIdentity` to require original PipelineRun annotations
 matching the repository, SHA, check ID, and PR number or complete tag ref.
@@ -278,7 +278,7 @@ The annotation contract follows upstream
 and [keys.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/apis/pipelinesascode/keys/keys.go).
 Original annotation values preserve full branch refs; sanitized labels do not.
 
-Verified run observations include `ImageURL` and `ImageDigest` from literal
-PipelineRun image results, using the API or archived record. Missing, ambiguous,
-or unverified outputs stay empty. Image output observations do not alter retry
-eligibility or confirm registry availability.
+Verified run observations expose a valid image reference in `ImageURL` and a
+valid SHA-256 digest in `ImageDigest`. Each field stays empty if its output is
+unavailable or invalid. Image output observations do not alter retry eligibility
+or confirm registry availability.

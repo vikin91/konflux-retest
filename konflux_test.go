@@ -3,6 +3,7 @@ package konfluxretest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -177,6 +178,7 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 		"should permit retry after consumer accepted input":                               {evidence: logEvidence{accepted: true}},
 		"should retain evidence when Docker and Quay are unavailable":                     {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true, pullError: true, want: "Konflux reported image not found", wantRegistry: true},
 		"should retain confirmed local absence when Quay is unavailable":                  {pull: true, pullReason: "image is missing (docker pull)", want: "image is missing (docker pull)", wantRegistry: true},
+		"should summarize a custom pull failure":                                          {pull: true, pullReason: "fixture-private-detail", want: "local verification reported an unusable image", wantRegistry: true},
 		"should allow retries after a successful pull despite stale missing-image logs":   {evidence: logEvidence{reason: "Konflux reported image not found"}, pull: true},
 		"should confirm existence without registry or log access after a successful pull": {pull: true},
 		"should try Quay after Docker access fails":                                       {pull: true, pullError: true, registryReady: true, wantRegistry: true},
@@ -210,7 +212,7 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 			if tt.pull {
 				checker.pull = func(context.Context, string) (string, error) {
 					if tt.pullError {
-						return "", fmt.Errorf("Docker unavailable")
+						return "", errors.New("fixture-private-detail")
 					}
 					return tt.pullReason, nil
 				}
@@ -218,6 +220,9 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 			reason, warnings, err := checker.check(t.Context(), checkRun{}, requirement)
 			if (err != nil) != tt.wantError || reason != tt.want {
 				t.Fatalf("reason=%q warnings=%v err=%v", reason, warnings, err)
+			}
+			if strings.Contains(strings.Join(warnings, "\n"), "fixture-private-detail") {
+				t.Fatalf("unexpected callback diagnostic: %v", warnings)
 			}
 			if (registryCalls > 0) != tt.wantRegistry {
 				t.Fatalf("registry calls=%d; want access=%v", registryCalls, tt.wantRegistry)

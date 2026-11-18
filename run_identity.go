@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/distribution/reference"
 )
 
 type runObservation struct {
@@ -27,33 +29,33 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 	}()
 	u, err := url.Parse(check.DetailsURL)
 	if err != nil {
-		return runObservation{}, fmt.Errorf("parse PipelineRun URL: %w", preserveCause(err, ""))
+		return runObservation{}, errors.New("invalid PipelineRun URL")
 	}
 	switch {
 	case u.Scheme != "https":
-		return runObservation{}, fmt.Errorf("unsupported PipelineRun URL scheme %q; expected https", u.Scheme)
+		return runObservation{}, errors.New("unsupported PipelineRun URL scheme, expected HTTPS")
 	case u.User != nil:
 		return runObservation{}, errors.New("unsupported PipelineRun URL: embedded credentials are not allowed")
 	case u.Port() != "":
-		return runObservation{}, fmt.Errorf("unsupported PipelineRun URL: explicit port %q is not allowed", u.Port())
+		return runObservation{}, errors.New("unsupported PipelineRun URL with an explicit port")
 	case !strings.HasPrefix(u.Host, "konflux-ui.apps.") || !strings.HasSuffix(u.Host, ".openshiftapps.com"):
-		return runObservation{}, fmt.Errorf("unsupported PipelineRun URL host %q; expected konflux-ui.apps.<cluster>.openshiftapps.com", u.Host)
+		return runObservation{}, errors.New("unsupported PipelineRun URL host, expected konflux-ui.apps.<cluster>.openshiftapps.com")
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) != 4 || parts[0] != "ns" || parts[2] != "pipelinerun" {
 		return runObservation{}, errors.New("unsupported PipelineRun path; expected /ns/<namespace>/pipelinerun/<name>")
 	}
 	if !konfluxName.MatchString(parts[1]) {
-		return runObservation{}, fmt.Errorf("unsupported PipelineRun namespace %q; expected a lowercase Kubernetes resource name", parts[1])
+		return runObservation{}, errors.New("unsupported PipelineRun namespace, expected a lowercase Kubernetes resource name")
 	}
 	if !konfluxName.MatchString(parts[3]) {
-		return runObservation{}, fmt.Errorf("unsupported PipelineRun name %q; expected a lowercase Kubernetes resource name", parts[3])
+		return runObservation{}, errors.New("unsupported PipelineRun name, expected a lowercase Kubernetes resource name")
 	}
 	category = "authentication failures"
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
 	token, err := c.token(ctx, "api."+cluster)
 	if err != nil {
-		return runObservation{}, fmt.Errorf("PipelineRun identity authentication for api.%s: %w", cluster, preserveCause(err, token))
+		return runObservation{}, diagnosticError("PipelineRun identity authentication failed for api."+cluster, err)
 	}
 	if token == "" {
 		return runObservation{}, fmt.Errorf("PipelineRun identity authentication for api.%s returned an empty token", cluster)
@@ -87,7 +89,7 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 			Next string `json:"next_page_token"`
 		}
 		if err := json.Unmarshal(data, &response); err != nil {
-			return runObservation{}, fmt.Errorf("API: %w; decode PipelineRun archive response: %w", apiErr, preserveCause(err, token))
+			return runObservation{}, fmt.Errorf("API: %w; could not decode PipelineRun archive response", apiErr)
 		}
 		if len(response.Records) != 1 || response.Next != "" {
 			return runObservation{}, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=%t; API: %w", len(response.Records), response.Next != "", apiErr)
@@ -97,7 +99,7 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 	category = "identity validation failures"
 	matches, err := matchRunIdentity(data, parts[1], parts[3], check.ID, repo, sha, tag, pr)
 	if err != nil {
-		return runObservation{}, preserveCause(err, token)
+		return runObservation{}, err
 	}
 	if !matches {
 		return runObservation{}, nil
@@ -114,24 +116,24 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 		}
 	}
 	if err := json.Unmarshal(data, &run); err != nil {
-		return false, fmt.Errorf("decode PipelineRun identity: %w", err)
+		return false, errors.New("could not decode PipelineRun identity")
 	}
 	if run.Metadata.Name != name || run.Metadata.Namespace != namespace {
-		return false, fmt.Errorf("PipelineRun identity mismatch: got %q/%q; expected %q/%q", run.Metadata.Namespace, run.Metadata.Name, namespace, name)
+		return false, errors.New("PipelineRun identity mismatch for namespace or name")
 	}
 	a := run.Metadata.Annotations
 	const prefix = "pipelinesascode.tekton.dev/"
 	if a[prefix+"check-run-id"] != strconv.FormatInt(id, 10) {
-		return false, fmt.Errorf("PipelineRun check-run-id annotation %q does not match %d", a[prefix+"check-run-id"], id)
+		return false, errors.New("PipelineRun check-run-id annotation does not match the check")
 	}
 	if a[prefix+"sha"] != sha {
-		return false, fmt.Errorf("PipelineRun SHA annotation %q does not match %q", a[prefix+"sha"], sha)
+		return false, errors.New("PipelineRun SHA annotation does not match the commit")
 	}
 	if strings.TrimSuffix(a[prefix+"repo-url"], ".git") != "https://github.com/"+repo {
-		return false, fmt.Errorf("PipelineRun repository annotation %q does not match %q", diagnosticURL(a[prefix+"repo-url"]), "https://github.com/"+repo)
+		return false, errors.New("PipelineRun repository annotation does not match the repository")
 	}
 	if a[prefix+"event-type"] == "" || a[prefix+"branch"] == "" {
-		return false, fmt.Errorf("PipelineRun event identity unavailable: event-type=%q, branch=%q", a[prefix+"event-type"], a[prefix+"branch"])
+		return false, errors.New("PipelineRun event identity unavailable: missing event type or branch")
 	}
 	if tag != "" {
 		return a[prefix+"event-type"] == "push" && a[prefix+"branch"] == "refs/tags/"+tag, nil
@@ -146,7 +148,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	return number == pr, nil
 }
 
-// pipelineImageResults preserves literal image outputs without changing retry eligibility.
+// pipelineImageResults admits validated image outputs independently of retry eligibility.
 func pipelineImageResults(data []byte) (string, string) {
 	type result struct {
 		Name  string          `json:"name"`
@@ -172,5 +174,12 @@ func pipelineImageResults(data []byte) (string, string) {
 		}
 		values[output.Name] = value
 	}
-	return values["IMAGE_URL"], values["IMAGE_DIGEST"]
+	image, digest := values["IMAGE_URL"], values["IMAGE_DIGEST"]
+	if _, err := reference.Parse(image); err != nil {
+		image = ""
+	}
+	if !digestPattern.MatchString(digest) {
+		digest = ""
+	}
+	return image, digest
 }

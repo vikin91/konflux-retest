@@ -188,10 +188,10 @@ func TestPipelineRunStartFailures(t *testing.T) {
 			}
 			wantFailures := []konfluxretest.StartFailure{
 				{CheckID: 134464223121, Job: "main-on-push", Cluster: "example.openshiftapps.com", Category: konfluxretest.StartFailureAdmissionPolicy,
-					Reason: "pipelineruns.tekton.dev is forbidden: ValidatingAdmissionPolicy 'deny-pipelinerun-create' with binding 'deny-pipelinerun-create' denied request: PipelineRun creation is temporarily disabled"},
+					Reason: "An admission policy denied PipelineRun creation."},
 				{CheckID: 20, Job: "operator-on-push", Cluster: "example.openshiftapps.com", Category: konfluxretest.StartFailureOther,
-					Reason: "PipelineRun quota exceeded. Request used [redacted] and [redacted], Authorization=[redacted], password=[redacted], access_token=[redacted], and https://api.example.test/resource"},
-				{CheckID: 23, Job: "operator-bundle-on-push", Category: konfluxretest.StartFailureOther, Reason: "pipelinerun start failure"},
+					Reason: "See the GitHub check for the PipelineRun creation failure."},
+				{CheckID: 23, Job: "operator-bundle-on-push", Category: konfluxretest.StartFailureOther, Reason: "See the GitHub check for the PipelineRun creation failure."},
 			}
 			if !slices.Equal(result.StartFailures, wantFailures) {
 				t.Fatalf("unexpected StartFailures: %+v", result.StartFailures)
@@ -209,7 +209,7 @@ func TestPipelineRunStartFailures(t *testing.T) {
 				}
 			}
 			visible := fmt.Sprintf("%+v %v", result, err)
-			for _, secret := range []string{"configured-gh-secret", "configured-quay-secret", "auth-secret", "value with spaces", "param-secret", "reason-user", "reason-password", "reason-query", "reason-fragment", "url-user", "url-password", "url-query-secret", "url-fragment"} {
+			for _, secret := range []string{"configured-gh-secret", "configured-quay-secret", "auth-secret", "value with spaces", "param-secret", "reason-user", "reason-password", "reason-query", "reason-fragment", "url-user", "url-password", "url-query-secret", "url-fragment", "deny-pipelinerun-create"} {
 				if strings.Contains(visible, secret) {
 					t.Error("credential leaked in check result or error")
 				}

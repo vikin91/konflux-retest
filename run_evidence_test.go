@@ -65,7 +65,7 @@ func TestStrictTagAssessmentExcludesDeveloperConformaFromIdentity(t *testing.T) 
 	const repo = "stackrox/fact"
 	dev := Advisory{ID: 133413328301, Name: "acs-conforma-dev-4-10 / fact-4-10", Conclusion: "failure", URL: "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/conforma-dev"}
 	legacyDev := Advisory{ID: 27, Name: "acs-conforma-dev / fact", Conclusion: "cancelled", URL: "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/legacy-dev"}
-	const missingID = `PipelineRun check-run-id annotation "" does not match 17`
+	const missingID = "PipelineRun check-run-id annotation does not match the check"
 	for name, tc := range map[string]struct {
 		includeDev   bool
 		job          string

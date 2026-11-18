@@ -34,7 +34,7 @@ type (
 		KonfluxToken func(context.Context, string) (string, error)
 		// PullImage optionally verifies image existence. Return an empty reason on success,
 		// a nonempty reason for a confirmed unusable image, or an error if inconclusive.
-		// Success permits retries without registry or log checks; failures use those fallbacks.
+		// Use "image is missing" for confirmed absence. Reports summarize other diagnostics.
 		PullImage func(ctx context.Context, image string) (reason string, err error)
 	}
 
@@ -67,7 +67,7 @@ type (
 		ID                      int64
 		Status, Conclusion, URL string
 		IdentityKnown, Eligible bool
-		// ImageURL and ImageDigest come from verified PipelineRun results; empty means unavailable.
+		// ImageURL and ImageDigest contain a validated image reference and SHA-256 digest from a verified run.
 		ImageURL, ImageDigest string
 	}
 
@@ -200,9 +200,8 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	}
 	for i := range checks {
 		check := &checks[i]
-		if failure := pipelineRunStartFailure(*check, c.token, checker.registry.password); failure != nil {
+		if failure := pipelineRunStartFailure(*check); failure != nil {
 			check.startFailure = failure
-			check.DetailsURL = diagnosticURL(check.DetailsURL)
 			result.StartFailures = append(result.StartFailures, *failure)
 		}
 	}
@@ -222,7 +221,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	for _, name := range advisoryNames {
 		check := advisoryChecks[name]
 		if check.Status == "completed" && check.Conclusion != "success" && check.Conclusion != "skipped" {
-			result.Advisories = append(result.Advisories, Advisory{ID: check.ID, Name: name, Conclusion: check.Conclusion, URL: check.DetailsURL})
+			result.Advisories = append(result.Advisories, Advisory{ID: check.ID, Name: name, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL)})
 		}
 	}
 	var identityErrors []error
@@ -243,7 +242,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 				observed, identityErr = c.identity(ctx, check, repo, result.SHA, result.Tag, result.prNumber)
 			}
 			if identityErr != nil {
-				identityErr = fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, diagnosticURL(check.DetailsURL), identityErr)
+				identityErr = fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, reportURL(check.DetailsURL), identityErr)
 				identityErrors = append(identityErrors, identityErr)
 				identityWarnings = append(identityWarnings, "identity unknown: "+identityErr.Error())
 				check.Status = "unknown"
@@ -285,7 +284,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	for _, name := range names {
 		check := latest[name]
 		job := strings.TrimPrefix(name, checkPrefix)
-		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: check.DetailsURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
+		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL), IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
 	}
 	return result, errors.Join(summarizeIdentityErrors(identityErrors), inputErr)
 }

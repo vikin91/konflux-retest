@@ -65,7 +65,7 @@ func (c githubClient) file(ctx context.Context, repo, sha, path string) ([]byte,
 	}
 	data, err := base64.StdEncoding.DecodeString(response.Content)
 	if err != nil {
-		return nil, fmt.Errorf("decode %s: %w", path, err)
+		return nil, fmt.Errorf("could not decode %s", path)
 	}
 	return data, nil
 }
@@ -73,7 +73,7 @@ func (c githubClient) file(ctx context.Context, repo, sha, path string) ([]byte,
 func (c githubClient) get(ctx context.Context, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
-		return fmt.Errorf("create GitHub request: %w", err)
+		return errors.New("invalid GitHub request URL")
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -83,7 +83,7 @@ func (c githubClient) get(ctx context.Context, path string, target any) error {
 	req.Header.Set("User-Agent", "konflux-retest")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("read GitHub API: %w", err)
+		return diagnosticError("GitHub API request failed", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -91,7 +91,7 @@ func (c githubClient) get(ctx context.Context, path string, target any) error {
 		return fmt.Errorf("GitHub API returned HTTP %d (%s); check token access and API rate limits", resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
-		return fmt.Errorf("decode GitHub response: %w", err)
+		return diagnosticError("could not decode GitHub response", err)
 	}
 	return nil
 }

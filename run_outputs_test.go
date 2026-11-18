@@ -14,8 +14,11 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 	const image = "quay.io/rhacs-eng/release-main:observed-build-fast"
 	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for name, tc := range map[string]struct {
-		archive, wantError                                                          string
-		legacy, mismatch, wrongPR, unverified, duplicate, structured, missingDigest bool
+		archive, wantError                string
+		outputs                           map[string]string
+		legacy, mismatch, wrongPR         bool
+		unverified, duplicate, structured bool
+		missingDigest                     bool
 	}{
 		"API results":                 {},
 		"archived legacy results":     {archive: "valid", legacy: true},
@@ -33,6 +36,8 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 		"ambiguous output":            {duplicate: true},
 		"non-string output":           {structured: true},
 		"missing digest":              {missingDigest: true},
+		"signed URL instead of image": {outputs: map[string]string{"IMAGE_URL": "https://registry.example/image?sig=private"}},
+		"invalid digest":              {outputs: map[string]string{"IMAGE_DIGEST": "fixture-private-value"}},
 		"API and archive unavailable": {archive: "forbidden", wantError: "HTTP 403 (Forbidden)"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -51,12 +56,19 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 				a[prefix+"pull-request"] = "not-a-number"
 			}
 			var imageValue any = image
+			if value, ok := tc.outputs["IMAGE_URL"]; ok {
+				imageValue = value
+			}
 			if tc.structured {
 				imageValue = []string{image}
 			}
 			outputs := []any{map[string]any{"name": "IMAGE_URL", "value": imageValue}}
 			if !tc.missingDigest {
-				outputs = append(outputs, map[string]any{"name": "IMAGE_DIGEST", "value": digest})
+				value := digest
+				if override, ok := tc.outputs["IMAGE_DIGEST"]; ok {
+					value = override
+				}
+				outputs = append(outputs, map[string]any{"name": "IMAGE_DIGEST", "value": value})
 			}
 			if tc.duplicate {
 				outputs = append(outputs, map[string]any{"name": "IMAGE_URL", "value": "quay.io/rhacs-eng/release-main:other"})
@@ -152,6 +164,12 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 				wantImage, wantDigest = "", ""
 			}
 			if tc.missingDigest {
+				wantDigest = ""
+			}
+			if _, ok := tc.outputs["IMAGE_URL"]; ok {
+				wantImage = ""
+			}
+			if _, ok := tc.outputs["IMAGE_DIGEST"]; ok {
 				wantDigest = ""
 			}
 			if run.ImageURL != wantImage || run.ImageDigest != wantDigest {

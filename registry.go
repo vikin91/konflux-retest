@@ -95,14 +95,14 @@ func (c registryClient) readiness(ctx context.Context, r imageRequirement) (stri
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(config, &image); err != nil {
-		return "", fmt.Errorf("decode image configuration: %w", err)
+		return "", errors.New("could not decode image configuration")
 	}
 	labels := image.Config.Labels
 	if len(strings.Fields(labels["vcs-ref"])) != 1 || len(strings.Fields(labels["source-location"])) != 1 {
 		return "image lacks required vcs-ref or source-location labels", nil
 	}
 	if labels["source-location"] == r.sourceURL && labels["vcs-ref"] != r.revision {
-		return fmt.Sprintf("image source revision %q does not match PR head %q", labels["vcs-ref"], r.revision), nil
+		return "image source revision does not match PR head", nil
 	}
 	attestationTag := strings.Replace(digest, ":", "-", 1) + ".att"
 	attestation, _, err := c.manifest(ctx, repo, attestationTag)
@@ -216,7 +216,7 @@ func (c registryClient) manifest(ctx context.Context, repo, ref string) (registr
 		return manifest, "", errors.New("manifest digest mismatch")
 	}
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return manifest, "", fmt.Errorf("decode registry manifest: %w", err)
+		return manifest, "", errors.New("could not decode registry manifest")
 	}
 	if manifest.SchemaVersion != 2 {
 		return manifest, "", errors.New("unsupported registry manifest schema")

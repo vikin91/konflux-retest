@@ -23,7 +23,7 @@ func (c inputChecker) check(ctx context.Context, check checkRun, requirement ima
 			return "", []string{requirement.image() + ": image exists (docker pull)."}, nil
 		}
 		if err != nil {
-			warnings = append(warnings, "Local image verification unavailable: "+err.Error()+".")
+			warnings = append(warnings, diagnosticError("Local image verification unavailable", err).Error()+".")
 		}
 	}
 
@@ -45,7 +45,10 @@ func (c inputChecker) check(ctx context.Context, check checkRun, requirement ima
 		warnings = append(warnings, "Konflux logs unavailable: "+logErr.Error()+".")
 	}
 	if pullReason != "" {
-		return pullReason, warnings, nil
+		if pullReason == "image is missing" || pullReason == "image is missing (docker pull)" {
+			return pullReason, warnings, nil
+		}
+		return "local verification reported an unusable image", warnings, nil
 	}
 	if evidence.accepted {
 		warnings = append(warnings, "Input readiness inferred from the latest Konflux logs; not reverified now.")
