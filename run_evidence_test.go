@@ -15,13 +15,18 @@ func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 	for name, tc := range map[string]struct {
 		newStatus, newOutcome string
 		unknown               bool
+		startFailure          bool
 		want                  []string
 	}{
-		"later branch does not hide tag": {"completed", "success", false, []string{"fact-on-push"}},
-		"unknown later run withholds":    {"completed", "failure", true, nil},
+		"later branch does not hide tag": {"completed", "success", false, false, []string{"fact-on-push"}},
+		"unknown later run withholds":    {"completed", "failure", true, false, nil},
+		"later failed start withholds":   {"completed", "failure", false, true, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			checks := []checkRun{{ID: 10, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "failure"}, {ID: 11, Name: checkPrefix + "fact-on-push", Status: tc.newStatus, Conclusion: tc.newOutcome}}
+			if tc.startFailure {
+				checks[1].Output.Title = "pipelinerun start failure"
+			}
 			c := githubClient{baseURL: "https://api.github.com", verifyIdentity: true, http: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				if r.URL.Query().Get("filter") != "all" {
 					t.Fatal("strict reads must include all check runs")
@@ -30,6 +35,9 @@ func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
 			})}, identity: func(_ context.Context, c checkRun, _, _, _ string, _ int) (runObservation, error) {
 				if c.ID == 11 {
+					if tc.startFailure {
+						t.Fatal("creation failure reached identity lookup")
+					}
 					if tc.unknown {
 						return runObservation{}, errors.New("archive unavailable")
 					}
@@ -41,8 +49,11 @@ func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 			if !slices.Equal(result.Jobs, tc.want) || (err != nil) != tc.unknown {
 				t.Fatal(result, err)
 			}
-			if !tc.unknown && (len(result.Runs) != 1 || result.Runs[0].ID != 10 || !result.Runs[0].IdentityKnown || !result.Runs[0].Eligible) {
+			if !tc.unknown && !tc.startFailure && (len(result.Runs) != 1 || result.Runs[0].ID != 10 || !result.Runs[0].IdentityKnown || !result.Runs[0].Eligible) {
 				t.Fatal(result.Runs)
+			}
+			if tc.startFailure && (result.Action != ActionWait || len(result.StartFailures) != 1 || result.StartFailures[0].CheckID != 11) {
+				t.Fatal(result)
 			}
 		})
 	}

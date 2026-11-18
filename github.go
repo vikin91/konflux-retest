@@ -38,10 +38,16 @@ type (
 		Name                  string    `json:"name"`
 		Status                string    `json:"status"`
 		Conclusion            string    `json:"conclusion"`
-		App                   struct {
+		Output                struct {
+			Title   string `json:"title"`
+			Summary string `json:"summary"`
+			Text    string `json:"text"`
+		} `json:"output"`
+		App struct {
 			Slug string `json:"slug"`
 			Name string `json:"name"`
 		} `json:"app"`
+		startFailure *StartFailure
 	}
 )
 

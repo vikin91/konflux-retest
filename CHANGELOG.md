@@ -4,10 +4,15 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+1. `Result.StartFailures` reports explicit PipelineRun creation failures by check ID, job, and cluster. It distinguishes admission-policy rejection from other start failures and includes a redacted reason.
+
 ### Fixed
 
-1. Excluded developer Conforma checks skip build identity lookup. Their failures remain visible as commit-scoped advisories without causing assessment errors or monitoring backoff.
-2. Strict assessments distinguish an empty GitHub check inventory from a commit with no verified build checks for the requested tag or PR. Lookup failures still report their causes.
+1. Checks that report a PipelineRun creation failure skip identity lookup and remain ineligible for automatic retries.
+2. Excluded developer Conforma checks skip build identity lookup. Their failures remain visible as commit-scoped advisories without causing assessment errors or monitoring backoff.
+3. Strict assessments distinguish an empty GitHub check inventory from a commit with no verified build checks for the requested tag or PR. Lookup failures still report their causes.
 
 ## [0.1.0]
 

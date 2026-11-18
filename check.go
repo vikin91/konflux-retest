@@ -55,7 +55,10 @@ type (
 		Runs []Run
 		// Advisories includes Conforma failures even outside retry prerequisites.
 		Advisories []Advisory
-		prNumber   int
+		// StartFailures reports creation failures among the commit's fetched checks,
+		// including checks whose PR or tag association cannot be verified.
+		StartFailures []StartFailure
+		prNumber      int
 	}
 
 	// Run is stable check evidence. Eligible is assigned only by the retry planner.
@@ -195,6 +198,14 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		result.Message = "GitHub returned no check runs for this commit."
 		return result, nil
 	}
+	for i := range checks {
+		check := &checks[i]
+		if failure := pipelineRunStartFailure(*check, c.token, checker.registry.password); failure != nil {
+			check.startFailure = failure
+			check.DetailsURL = diagnosticURL(check.DetailsURL)
+			result.StartFailures = append(result.StartFailures, *failure)
+		}
+	}
 	// Policy findings remain visible as commit-scoped advisories when run identity is unavailable.
 	advisoryChecks := map[string]checkRun{}
 	for _, check := range checks {
@@ -221,6 +232,10 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		scoped := make([]checkRun, 0, len(checks))
 		for _, check := range checks {
 			if !isKonflux(check) || ignoredKonfluxCheck(check.Name) {
+				continue
+			}
+			if check.startFailure != nil {
+				scoped = append(scoped, check)
 				continue
 			}
 			observed, identityErr := runObservation{}, errors.New("PipelineRun identity access is unavailable")

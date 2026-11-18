@@ -1,0 +1,58 @@
+{
+  "check_runs": [
+    {
+      "id": 134464223121,
+      "name": "Red Hat Konflux / main-on-push",
+      "status": "completed",
+      "conclusion": "failure",
+      "details_url": "https://konflux-ui.apps.example.openshiftapps.com/",
+      "output": {
+        "title": "pipelinerun start failure",
+        "text": "pipelineruns.tekton.dev is forbidden: ValidatingAdmissionPolicy 'deny-pipelinerun-create' with binding 'deny-pipelinerun-create' denied request: PipelineRun creation is temporarily disabled"
+      }
+    },
+    {
+      "id": 20,
+      "name": "Red Hat Konflux / operator-on-push",
+      "status": "completed",
+      "conclusion": "failure",
+      "details_url": "https://url-user:url-password@konflux-ui.apps.example.openshiftapps.com/?token=url-query-secret#url-fragment",
+      "output": {
+        "title": "PipelineRun start failure",
+        "summary": "PipelineRun quota exceeded. Request used configured-gh-secret and configured-quay-secret, Authorization: Bearer auth-secret, password='value with spaces', access_token=param-secret, and https://reason-user:reason-password@api.example.test/resource?signature=reason-query#reason-fragment."
+      }
+    },
+    {
+      "id": 21,
+      "name": "Red Hat Konflux / scanner-v4-on-push",
+      "status": "completed",
+      "conclusion": "failure",
+      "details_url": "https://konflux-ui.apps.example.openshiftapps.com/",
+      "output": {
+        "title": "Build failed",
+        "text": null
+      }
+    },
+    {
+      "id": 22,
+      "name": "Red Hat Konflux / checks",
+      "status": "completed",
+      "conclusion": "failure",
+      "details_url": "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/checks-22",
+      "output": {
+        "title": "PipelineRun failed",
+        "text": "The checks task failed."
+      }
+    },
+    {
+      "id": 23,
+      "name": "Red Hat Konflux / operator-bundle-on-push",
+      "status": "completed",
+      "conclusion": "startup_failure",
+      "details_url": "https://%zz",
+      "output": {
+        "title": "pipelinerun start failure"
+      }
+    }
+  ]
+}
