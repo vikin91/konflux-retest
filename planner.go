@@ -13,7 +13,7 @@ var (
 	// ignoredKonfluxChecks is an arbitrary, tool-specific list of Konflux checks
 	// deliberately excluded from build identity verification and retry planning.
 	ignoredKonfluxChecks = []*regexp.Regexp{
-		regexp.MustCompile(`^Red Hat Konflux / acs-conforma-dev(-[0-9]+-[0-9]+)? / `),
+		regexp.MustCompile(`^Red Hat Konflux / acs-conforma-dev(-[0-9]+-[0-9]+)?(?:$| / )`),
 	}
 	// scannerRetagJobs is a branch-specific group of Scanner V2 bundle prerequisites.
 	// Observing any member requires the whole group; branches without it omit all four.
@@ -37,7 +37,7 @@ var (
 		{"fact-on-push"},
 	}
 	// policyCheck recognizes supported scenarios and components across release streams.
-	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)? / (central-db|main|operator|scanner-v4|scanner-v4-db|scanner|scanner-db|scanner-slim|scanner-db-slim|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?$`)
+	policyCheck = regexp.MustCompile(`^acs-conforma-(dev|prod|prod-like)(-[0-9]+-[0-9]+)?(?: / (central-db|main|operator|scanner-v4|scanner-v4-db|scanner|scanner-db|scanner-slim|scanner-db-slim|operator-bundle|roxctl|collector|fact)(-[0-9]+-[0-9]+)?)?$`)
 )
 
 type retryPlan struct {

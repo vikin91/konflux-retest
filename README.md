@@ -206,7 +206,7 @@ Verified against the PR-head pipeline definitions for [release-4.10](https://git
 
 `ignoredKonfluxChecks` in `planner.go` is an arbitrary, tool-specific ignore list. It currently ignores `acs-conforma-dev` checks, including release-suffixed scenarios such as `acs-conforma-dev-5-0`, regardless of status or component. These checks produce no diagnostics or retry commands and do not block milestones. This is a deliberate noise filter, not a Konflux dependency rule.
 
-The catalog and policy-name matching are in `planner.go`. Policy checks use the full shape `Red Hat Konflux / SCENARIO / COMPONENT`. New scenarios or components warn rather than being silently accepted.
+The policy catalog in `planner.go` recognizes both `Red Hat Konflux / SCENARIO` summaries and `Red Hat Konflux / SCENARIO / COMPONENT` checks. Known policy checks do not require PipelineRun identity. New scenarios or components produce a warning.
 
 ## Selection rules
 

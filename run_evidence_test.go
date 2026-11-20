@@ -77,15 +77,16 @@ func TestStrictTagAssessmentExcludesDeveloperConformaFromIdentity(t *testing.T) 
 		wantWarning  string
 		wantError    string
 	}{
-		"empty GitHub inventory":                      {wantAction: ActionWait, wantMessage: "GitHub returned no check runs for this commit."},
-		"only excluded advisories":                    {includeDev: true, wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR."},
-		"verified build beside excluded advisories":   {includeDev: true, job: "fact-on-push", matches: true, wantAction: ActionRetest},
-		"build for a different ref":                   {includeDev: true, job: "fact-on-push", wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR."},
-		"build identity failure":                      {includeDev: true, job: "fact-on-push", missingID: true, wantAction: ActionWait, wantWarning: missingID, wantError: missingID},
-		"production Conforma still requires identity": {job: "acs-conforma-prod-4-10 / fact-4-10", missingID: true, wantAction: ActionWait, wantWarning: missingID, wantError: missingID},
-		"verified production Conforma is not a build": {job: "acs-conforma-prod-4-10 / fact-4-10", matches: true, wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR.", wantWarning: "policy check"},
-		"unknown Konflux job still requires identity": {job: "new-job", missingID: true, wantAction: ActionWait, wantWarning: "unknown Konflux check", wantError: missingID},
-		"GitHub lookup failure":                       {githubStatus: http.StatusServiceUnavailable, wantAction: ActionWait, wantWarning: "HTTP 503", wantError: "HTTP 503"},
+		"empty GitHub inventory":                          {wantAction: ActionWait, wantMessage: "GitHub returned no check runs for this commit."},
+		"only excluded advisories":                        {includeDev: true, wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR."},
+		"verified build beside excluded advisories":       {includeDev: true, job: "fact-on-push", matches: true, wantAction: ActionRetest},
+		"build for a different ref":                       {includeDev: true, job: "fact-on-push", wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR."},
+		"build identity failure":                          {includeDev: true, job: "fact-on-push", missingID: true, wantAction: ActionWait, wantWarning: missingID, wantError: missingID},
+		"production Conforma component needs no identity": {job: "acs-conforma-prod-4-10 / fact-4-10", wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR.", wantWarning: "policy check"},
+		"production Conforma summary needs no identity":   {job: "acs-conforma-prod-like-4-10", wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR.", wantWarning: "policy check"},
+		"developer Conforma summary needs no identity":    {job: "acs-conforma-dev-4-10", wantAction: ActionWait, wantMessage: "No verified build checks match the requested tag or PR."},
+		"unknown Konflux job still requires identity":     {job: "new-job", missingID: true, wantAction: ActionWait, wantWarning: "unknown Konflux check", wantError: missingID},
+		"GitHub lookup failure":                           {githubStatus: http.StatusServiceUnavailable, wantAction: ActionWait, wantWarning: "HTTP 503", wantError: "HTTP 503"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var checks []checkRun
@@ -143,7 +144,8 @@ func TestStrictTagAssessmentExcludesDeveloperConformaFromIdentity(t *testing.T) 
 			if (err != nil) != (tc.wantError != "") || err != nil && !strings.Contains(err.Error(), tc.wantError) {
 				t.Fatalf("assessment error = %v, want %q", err, tc.wantError)
 			}
-			if (identityCalls == 1) != (tc.job != "") || identityCalls > 1 {
+			wantLookup := tc.job != "" && !strings.HasPrefix(tc.job, "acs-conforma-")
+			if (identityCalls == 1) != wantLookup || identityCalls > 1 {
 				t.Fatalf("unexpected identity lookup count: %d", identityCalls)
 			}
 			if !slices.Equal(result.Advisories, wantAdvisories) {

@@ -86,6 +86,15 @@ func TestPlanRetries(t *testing.T) {
 			extra:   []checkRun{buildCheck("acs-conforma-new-policy-5-0 / main-5-0", "completed", "failure")},
 			message: "WARNING: unknown Konflux check",
 		},
+		"should allow the failed operator index when policy summaries are unfinished": {
+			changes: map[string]checkRun{"operator-index-on-push": buildCheck("operator-index-on-push", "completed", "failure")},
+			extra: []checkRun{
+				buildCheck("acs-conforma-dev-4-11", "completed", "failure"),
+				buildCheck("acs-conforma-prod-like-4-11", "completed", "neutral"),
+			},
+			want:    []string{"operator-index-on-push"},
+			message: "policy check",
+		},
 		"should warn on new policy components": {
 			extra:   []checkRun{buildCheck("acs-conforma-prod-like-5-0 / new-component-5-0", "completed", "failure")},
 			message: "WARNING: unknown Konflux check",

@@ -238,7 +238,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 			if !isKonflux(check) || ignoredKonfluxCheck(check.Name) {
 				continue
 			}
-			if check.startFailure != nil {
+			if check.startFailure != nil || policyCheck.MatchString(strings.TrimPrefix(check.Name, checkPrefix)) {
 				scoped = append(scoped, check)
 				continue
 			}
