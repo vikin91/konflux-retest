@@ -282,6 +282,9 @@ The annotation contract follows upstream
 [Pipelines-as-Code labels.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/kubeinteraction/labels.go)
 and [keys.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/apis/pipelinesascode/keys/keys.go).
 Original annotation values preserve full branch refs; sanitized labels do not.
+Named tag retests must carry the full tag ref. For custom PR comments, the
+source branch or source repository must also distinguish the run from a commit
+comment, which can carry an associated PR number.
 
 Verified run observations expose a valid image reference in `ImageURL` and a
 valid SHA-256 digest in `ImageDigest`. Each field stays empty if its output is

@@ -133,3 +133,55 @@ func TestRunIdentity(t *testing.T) {
 		})
 	}
 }
+
+func TestCommentRunIdentity(t *testing.T) {
+	for name, tc := range map[string]struct {
+		event, branch, sourceBranch, sourceRepo, number, tag string
+		want, unknown                                        bool
+	}{
+		"PR comment": {
+			event: "on-comment", branch: "release-1.2", sourceBranch: "fix", number: "42", want: true,
+		},
+		"PR comment from a fork with the same branch name": {
+			event: "on-comment", branch: "release-1.2", sourceBranch: "release-1.2", sourceRepo: "https://github.com/contributor/fact", number: "42", want: true,
+		},
+		"comment on a different PR": {
+			event: "on-comment", branch: "release-1.2", sourceBranch: "fix", number: "43",
+		},
+		"branch commit comment associated with the requested PR": {
+			event: "on-comment", branch: "refs/heads/release-1.2", sourceBranch: "release-1.2", sourceRepo: "https://github.com/stackrox/fact", number: "42",
+		},
+		"comment with no source branch": {
+			event: "on-comment", branch: "release-1.2", number: "42", unknown: true,
+		},
+		"comment with equal branches and no source repository": {
+			event: "on-comment", branch: "release-1.2", sourceBranch: "release-1.2", number: "42", unknown: true,
+		},
+		"tag retest": {
+			event: "retest-comment", branch: "refs/tags/v1.2.3", tag: "v1.2.3", want: true,
+		},
+		"tag retest associated with the requested PR": {
+			event: "retest-comment", branch: "refs/tags/v1.2.3", number: "42",
+		},
+		"branch retest for a different ref": {
+			event: "retest-comment", branch: "release-1.2", tag: "v1.2.3",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			const p = "pipelinesascode.tekton.dev/"
+			annotations := map[string]string{
+				p + "check-run-id": "123", p + "sha": "head", p + "repo-url": "https://github.com/stackrox/fact",
+				p + "event-type": tc.event, p + "branch": tc.branch, p + "source-branch": tc.sourceBranch,
+				p + "source-repo-url": tc.sourceRepo, p + "pull-request": tc.number,
+			}
+			data, err := json.Marshal(map[string]any{"metadata": map[string]any{"name": "run", "namespace": "builds", "annotations": annotations}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			matches, err := matchRunIdentity(data, "builds", "run", 123, "stackrox/fact", "head", tc.tag, 42)
+			if matches != tc.want || (err != nil) != tc.unknown {
+				t.Fatalf("matches=%t error=%v, want matches=%t unknown=%t", matches, err, tc.want, tc.unknown)
+			}
+		})
+	}
+}

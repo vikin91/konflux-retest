@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/distribution/reference"
+	"github.com/vikin91/konflux-retest/internal/refs"
 )
 
 type runObservation struct {
@@ -129,13 +130,35 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	if strings.TrimSuffix(a[prefix+"repo-url"], ".git") != "https://github.com/"+repo {
 		return false, errors.New("PipelineRun repository annotation does not match the repository")
 	}
-	if a[prefix+"event-type"] == "" || a[prefix+"branch"] == "" {
+	event, branch := a[prefix+"event-type"], a[prefix+"branch"]
+	if event == "" || branch == "" {
 		return false, errors.New("PipelineRun event identity unavailable: missing event type or branch")
 	}
 	if tag != "" {
-		return a[prefix+"event-type"] == "push" && a[prefix+"branch"] == "refs/tags/"+tag, nil
+		return (event == "push" || event == "retest-comment") && branch == "refs/tags/"+tag, nil
 	}
-	if a[prefix+"event-type"] != "pull_request" {
+	switch event {
+	case "on-comment":
+		sourceBranch := a[prefix+"source-branch"]
+		if strings.HasPrefix(branch, "refs/tags/") || strings.HasPrefix(sourceBranch, "refs/tags/") {
+			return false, nil
+		}
+		if sourceBranch == "" {
+			return false, errors.New("PipelineRun PR comment identity unavailable: missing source branch")
+		}
+		// GitHub commit comments use the same source and target branch and repository,
+		// even when Pipelines-as-Code attaches an associated PR number.
+		if strings.TrimPrefix(sourceBranch, "refs/heads/") == strings.TrimPrefix(branch, "refs/heads/") {
+			sourceRepo, isGitHub := strings.CutPrefix(strings.TrimSuffix(a[prefix+"source-repo-url"], ".git"), "https://github.com/")
+			if !isGitHub || !refs.ValidRepository(sourceRepo) {
+				return false, errors.New("PipelineRun PR comment identity unavailable: expected a GitHub source repository")
+			}
+			if strings.EqualFold(sourceRepo, repo) {
+				return false, nil
+			}
+		}
+	case "pull_request":
+	default:
 		return false, nil
 	}
 	number, err := strconv.Atoi(a[prefix+"pull-request"])
