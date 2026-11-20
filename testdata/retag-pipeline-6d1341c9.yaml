@@ -1,0 +1,44 @@
+# Input contract from StackRox PR #23986 at 079bcc74f43f86adff65a7cb1834e483c20065b6.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: retag-pipeline
+spec:
+  params:
+  - name: image-tag-suffix
+    default: "-fast"
+  tasks:
+  - name: determine-input-image-tag
+    params:
+    - name: MAKEFILE_TARGET
+      value: $(params.input-image-tag-makefile-target)
+    - name: TAG_SUFFIX
+      value: $(params.image-tag-suffix)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.clone-repository.results.SOURCE_ARTIFACT)
+    taskRef:
+      params:
+      - name: name
+        value: determine-dependency-image-tag
+      - name: bundle
+        value: quay.io/rhacs-eng/konflux-tasks:latest@sha256:6d1341c9d70c94f484668b9af3f618654d4743ce151a4b529ad19572960f8b82
+      - name: kind
+        value: task
+      resolver: bundles
+
+    # We only check the input image is ready and otherwise fail the retag pipeline early and with a meaningful error.
+    # This confirms that the image is present and that it has successfully passed its build pipeline.
+  - name: wait-for-image
+    params:
+    - name: IMAGE
+      value: "$(params.input-image-repo):$(tasks.determine-input-image-tag.results.IMAGE_TAG)"
+    taskRef:
+      params:
+      - name: name
+        value: wait-for-image
+      - name: bundle
+        value: quay.io/rhacs-eng/konflux-tasks:latest@sha256:6d1341c9d70c94f484668b9af3f618654d4743ce151a4b529ad19572960f8b82
+      - name: kind
+        value: task
+      resolver: bundles
+    timeout: 5m

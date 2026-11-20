@@ -243,7 +243,7 @@ Direct registry checks follow the consumer's [pinned wait-for-image task](https:
 2. Require `vcs-ref` and `source-location` labels. Require the resolved commit revision only when `source-location` exactly matches the consumer repository URL. Images from another repository, including Scanner, do not need the StackRox revision.
 3. Require the digest's Cosign `.att` artifact. Accept SLSA v0.2 task results only when all statuses are `Succeeded`; for SLSA v1 with Tekton Chains v2, require a successful condition on every `pipelineTask` dependency.
 
-These are the consumer's readiness checks, not cryptographic signature verification or full Conforma policy validation. The tool reads manifests, configuration, and attestations; it does not download image filesystem layers unless `--verify-pull` is enabled. It supports the inspected task bundles with digest prefixes `cc0e455b…`, `ad73f114…`, and `48cf6499…`. Unknown task bundles, changed parameter wiring, or unsupported Makefile recipes withhold the retest and report a resolution error so the tool does not assume that the consumer contract is unchanged.
+These are the consumer's readiness checks, not cryptographic signature verification or full Conforma policy validation. The tool reads manifests, configuration, and attestations; it does not download image filesystem layers unless `--verify-pull` is enabled. It supports the inspected task bundles with digest prefixes `cc0e455b…`, `ad73f114…`, `48cf6499…`, and `6d1341c9…`. Unknown task bundles, changed parameter wiring, or unsupported Makefile recipes withhold the retest and report a resolution error so the tool does not assume that the consumer contract is unchanged. Library callers can use `errors.Is(err, ErrUnsupportedRetagContract)` to identify contract failures.
 
 Missing images produce `Investigate missing images`; other unavailable inputs produce `Wait`. Warnings name the exact required image. Other eligible jobs can still be suggested, and downstream milestones remain blocked. For example:
 
@@ -290,7 +290,9 @@ Each lookup has up to 10 seconds, with up to 5 seconds for the live API
 and time reserved for the archive. The identity stage has up to 30 seconds
 within the caller's deadline. Missing origin metadata produces a warning.
 Lookup failures can return a partial error with usable results for unrelated
-verified jobs.
+verified jobs. If archived PipelineRuns reuse a name, the lookup requires
+distinct Kubernetes UIDs and exactly one record for the expected GitHub
+check ID. The selected record still has to match the requested PR or tag.
 
 The annotation contract follows upstream
 [Pipelines-as-Code labels.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/kubeinteraction/labels.go)

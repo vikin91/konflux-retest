@@ -3,6 +3,7 @@ package konfluxretest
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -84,7 +85,7 @@ func TestResolveImageOverridesAndUnknownContracts(t *testing.T) {
 			files[tt.path] = []byte(strings.ReplaceAll(string(files[tt.path]), tt.old, tt.replacement))
 			got, err := resolveImage(func(path string) ([]byte, error) { return files[path], nil }, "retag-scanner", "https://github.com/stackrox/stackrox", "head")
 			if tt.want != "" {
-				if err == nil || !strings.Contains(err.Error(), tt.want) {
+				if !errors.Is(err, ErrUnsupportedRetagContract) || !strings.Contains(err.Error(), tt.want) {
 					t.Fatalf("error=%v; want %q", err, tt.want)
 				}
 			} else if err != nil || got.tag != tt.tag {
@@ -94,11 +95,24 @@ func TestResolveImageOverridesAndUnknownContracts(t *testing.T) {
 	}
 }
 
+func TestResolveImageWithPR23986Bundle(t *testing.T) {
+	files := requirementFiles(t)
+	pipeline, err := os.ReadFile("testdata/retag-pipeline-6d1341c9.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files[".tekton/retag-pipeline.yaml"] = pipeline
+	got, err := resolveImage(func(path string) ([]byte, error) { return files[path], nil }, "retag-scanner", "https://github.com/stackrox/stackrox", "head")
+	if err != nil || got.image() != "quay.io/rhacs-eng/release-scanner:2.39.27-fast" {
+		t.Fatalf("got image %q, error %v", got.image(), err)
+	}
+}
+
 func TestResolveImageReportsFilenameForInvalidYAML(t *testing.T) {
 	_, err := resolveImage(func(string) ([]byte, error) {
 		return []byte("kind: *fixture-private-anchor\n"), nil
 	}, "retag-scanner", "https://github.com/stackrox/stackrox", "head")
-	if err == nil || err.Error() != "could not parse .tekton/retag-scanner.yaml" {
+	if !errors.Is(err, ErrUnsupportedRetagContract) || !strings.HasSuffix(err.Error(), "could not parse .tekton/retag-scanner.yaml") {
 		t.Fatalf("unexpected YAML diagnostic: %v", err)
 	}
 }

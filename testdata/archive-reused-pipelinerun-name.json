@@ -1,0 +1,43 @@
+[
+  {
+    "apiVersion": "tekton.dev/v1beta1",
+    "kind": "PipelineRun",
+    "metadata": {
+      "namespace": "rh-acs-tenant",
+      "name": "scanner-v4-on-push-cqhl7",
+      "uid": "11111111-1111-4111-8111-111111111111",
+      "creationTimestamp": "2024-11-04T20:52:47Z",
+      "annotations": {
+        "pipelinesascode.tekton.dev/repo-url": "https://github.com/stackrox/stackrox",
+        "pipelinesascode.tekton.dev/sha": "cc4bc7de2dcaca85430c9c29b64c2af5e94ecc1d",
+        "pipelinesascode.tekton.dev/check-run-id": "32501188263",
+        "pipelinesascode.tekton.dev/event-type": "push",
+        "pipelinesascode.tekton.dev/branch": "release-4.6"
+      }
+    }
+  },
+  {
+    "apiVersion": "tekton.dev/v1",
+    "kind": "PipelineRun",
+    "metadata": {
+      "namespace": "rh-acs-tenant",
+      "name": "scanner-v4-on-push-cqhl7",
+      "uid": "22222222-2222-4222-8222-222222222222",
+      "creationTimestamp": "2026-11-13T02:59:15Z",
+      "annotations": {
+        "pipelinesascode.tekton.dev/repo-url": "https://github.com/stackrox/stackrox",
+        "pipelinesascode.tekton.dev/sha": "1c511896804e8256bb06f2fa8e9ac1541109281e",
+        "pipelinesascode.tekton.dev/check-run-id": "131657651084",
+        "pipelinesascode.tekton.dev/event-type": "pull_request",
+        "pipelinesascode.tekton.dev/branch": "release-4.11",
+        "pipelinesascode.tekton.dev/pull-request": "23856"
+      }
+    },
+    "status": {
+      "results": [
+        {"name": "IMAGE_URL", "value": "quay.io/example/scanner-v4:fixture"},
+        {"name": "IMAGE_DIGEST", "value": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      ]
+    }
+  }
+]

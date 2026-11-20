@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -79,27 +80,66 @@ func TestCheckPRUsesOptionalIntegrations(t *testing.T) {
 }
 
 func TestCheckPRRetainsUnaffectedJobsOnInputError(t *testing.T) {
-	checks := successfulChecks()
-	for i := range checks {
-		if slices.Contains([]string{checkPrefix + "retag-scanner", checkPrefix + "roxctl-on-push"}, checks[i].Name) {
-			checks[i].Conclusion = "failure"
-		}
-	}
-	config := Config{HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		body := `{"state":"open","head":{"sha":"head"}}`
-		status := http.StatusOK
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/check-runs"):
-			data, _ := json.Marshal(map[string]any{"check_runs": checks})
-			body = string(data)
-		case strings.Contains(r.URL.Path, "/contents/"):
-			status = http.StatusServiceUnavailable
-		}
-		return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
-	})}}
-	result, err := CheckPR(t.Context(), config, "stackrox/stackrox", 1)
-	if err == nil || result.Action != ActionRetest || !slices.Equal(result.Jobs, []string{"roxctl-on-push"}) || !strings.Contains(strings.Join(result.Warnings, "\n"), "HTTP 503") {
-		t.Fatalf("result=%+v error=%v", result, err)
+	for name, contractError := range map[string]bool{"read error": false, "contract error": true} {
+		t.Run(name, func(t *testing.T) {
+			files := requirementFiles(t)
+			pipeline := string(files[".tekton/retag-pipeline.yaml"])
+			files[".tekton/retag-pipeline.yaml"] = []byte(strings.ReplaceAll(pipeline, "cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3", strings.Repeat("0", 64)))
+			checks := successfulChecks()
+			ids := map[string]int64{}
+			for i := range checks {
+				job := strings.TrimPrefix(checks[i].Name, checkPrefix)
+				checks[i].ID = int64(i + 1)
+				checks[i].DetailsURL = "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/" + job
+				ids[job] = checks[i].ID
+				if job == "retag-scanner" || job == "roxctl-on-push" {
+					checks[i].Conclusion = "failure"
+				}
+			}
+			config := Config{
+				VerifyRunIdentity: true,
+				KonfluxToken:      func(context.Context, string) (string, error) { return "fixture", nil },
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					body := `{"state":"open","head":{"sha":"head"}}`
+					status := http.StatusOK
+					switch {
+					case strings.HasSuffix(r.URL.Path, "/check-runs"):
+						data, _ := json.Marshal(map[string]any{"check_runs": checks})
+						body = string(data)
+					case strings.Contains(r.URL.Path, "/contents/"):
+						if contractError {
+							_, path, _ := strings.Cut(r.URL.Path, "/contents/")
+							data, _ := json.Marshal(map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString(files[path])})
+							body = string(data)
+						} else {
+							status = http.StatusServiceUnavailable
+						}
+					case strings.Contains(r.URL.Path, "/pipelineruns/"):
+						job := strings.TrimPrefix(r.URL.Path, "/apis/tekton.dev/v1/namespaces/builds/pipelineruns/")
+						body = `{"metadata":{"name":"` + job + `","namespace":"builds","annotations":{
+							"pipelinesascode.tekton.dev/check-run-id":"` + strconv.FormatInt(ids[job], 10) + `",
+							"pipelinesascode.tekton.dev/repo-url":"https://github.com/stackrox/stackrox",
+							"pipelinesascode.tekton.dev/sha":"head","pipelinesascode.tekton.dev/event-type":"pull_request",
+							"pipelinesascode.tekton.dev/branch":"release-4.11","pipelinesascode.tekton.dev/pull-request":"1"}}}`
+					}
+					return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
+			}
+			result, err := CheckPR(t.Context(), config, "stackrox/stackrox", 1)
+			if err == nil || errors.Is(err, ErrUnsupportedRetagContract) != contractError || result.Action != ActionRetest || !slices.Equal(result.Jobs, []string{"roxctl-on-push"}) {
+				t.Fatalf("result=%+v error=%v", result, err)
+			}
+			wantWarning := "HTTP 503"
+			if contractError {
+				wantWarning = "unsupported pinned task"
+			}
+			if !strings.Contains(strings.Join(result.Warnings, "\n"), wantWarning) {
+				t.Fatalf("warnings=%v, want %q", result.Warnings, wantWarning)
+			}
+			if !slices.ContainsFunc(result.Runs, func(run Run) bool { return run.Job == "roxctl-on-push" && run.IdentityKnown && run.Eligible }) {
+				t.Fatalf("lost verified retry evidence: %+v", result.Runs)
+			}
+		})
 	}
 }
 

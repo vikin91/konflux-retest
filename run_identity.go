@@ -21,7 +21,20 @@ type (
 	}
 	// runOriginError identifies readable PipelineRun metadata with insufficient scope evidence.
 	runOriginError string
+	archivedRun    struct {
+		Data struct {
+			Value []byte `json:"value"`
+		} `json:"data"`
+	}
+	pipelineRunIdentity struct {
+		Metadata struct {
+			Name, Namespace, UID string
+			Annotations          map[string]string
+		}
+	}
 )
+
+const pacAnnotationPrefix = "pipelinesascode.tekton.dev/"
 
 func (e runOriginError) Error() string { return string(e) }
 
@@ -85,20 +98,19 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 			return runObservation{}, fmt.Errorf("PipelineRun identity unavailable in API and archive: API: %w; archive: %w", apiErr, err)
 		}
 		var response struct {
-			Records []struct {
-				Data struct {
-					Value []byte `json:"value"`
-				} `json:"data"`
-			} `json:"records"`
-			Next string `json:"next_page_token"`
+			Records []archivedRun `json:"records"`
+			Next    string        `json:"next_page_token"`
 		}
 		if err := json.Unmarshal(data, &response); err != nil {
 			return runObservation{}, fmt.Errorf("API: %w; could not decode PipelineRun archive response", apiErr)
 		}
-		if len(response.Records) != 1 || response.Next != "" {
+		if len(response.Records) == 0 || response.Next != "" {
 			return runObservation{}, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=%t; API: %w", len(response.Records), response.Next != "", apiErr)
 		}
-		data = response.Records[0].Data.Value
+		data, err = selectArchivedRun(response.Records, parts[1], parts[3], check.ID)
+		if err != nil {
+			return runObservation{}, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=false: %w; API: %w", len(response.Records), err, apiErr)
+		}
 	}
 	category = "identity validation failures"
 	matches, err := matchRunIdentity(data, parts[1], parts[3], check.ID, repo, sha, tag, pr)
@@ -112,13 +124,47 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 	return runObservation{matches: true, imageURL: imageURL, imageDigest: imageDigest}, nil
 }
 
-func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, tag string, pr int) (bool, error) {
-	var run struct {
-		Metadata struct {
-			Name, Namespace string
-			Annotations     map[string]string
+// selectArchivedRun distinguishes reused names by Kubernetes UID and GitHub check ID.
+func selectArchivedRun(records []archivedRun, namespace, name string, checkID int64) ([]byte, error) {
+	if len(records) == 1 {
+		return records[0].Data.Value, nil
+	}
+	uids := make(map[string]bool, len(records))
+	var candidate []byte
+	for _, record := range records {
+		data := record.Data.Value
+		var run pipelineRunIdentity
+		if err := json.Unmarshal(data, &run); err != nil {
+			return nil, errors.New("could not decode archived PipelineRun identity")
+		}
+		metadata := run.Metadata
+		if metadata.Namespace != namespace || metadata.Name != name {
+			return nil, errors.New("archived PipelineRun identity mismatch for namespace or name")
+		}
+		if metadata.UID == "" || uids[metadata.UID] {
+			return nil, errors.New("missing or repeated archived PipelineRun UID")
+		}
+		uids[metadata.UID] = true
+		annotation := metadata.Annotations[pacAnnotationPrefix+"check-run-id"]
+		id, err := strconv.ParseInt(annotation, 10, 64)
+		if err != nil || id <= 0 || annotation != strconv.FormatInt(id, 10) {
+			return nil, errors.New("missing or invalid archived check-run-id annotation")
+		}
+		if id == checkID {
+			if candidate != nil {
+				return nil, errors.New("multiple archived PipelineRuns claim the check ID")
+			}
+			candidate = data
 		}
 	}
+	if candidate == nil {
+		return nil, errors.New("no archived PipelineRun matches the check ID")
+	}
+	return candidate, nil
+}
+
+func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, tag string, pr int) (bool, error) {
+	var run pipelineRunIdentity
 	if err := json.Unmarshal(data, &run); err != nil {
 		return false, errors.New("could not decode PipelineRun identity")
 	}
@@ -126,17 +172,16 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 		return false, errors.New("PipelineRun identity mismatch for namespace or name")
 	}
 	a := run.Metadata.Annotations
-	const prefix = "pipelinesascode.tekton.dev/"
-	if a[prefix+"check-run-id"] != strconv.FormatInt(id, 10) {
+	if a[pacAnnotationPrefix+"check-run-id"] != strconv.FormatInt(id, 10) {
 		return false, errors.New("PipelineRun check-run-id annotation does not match the check")
 	}
-	if a[prefix+"sha"] != sha {
+	if a[pacAnnotationPrefix+"sha"] != sha {
 		return false, errors.New("PipelineRun SHA annotation does not match the commit")
 	}
-	if strings.TrimSuffix(a[prefix+"repo-url"], ".git") != "https://github.com/"+repo {
+	if strings.TrimSuffix(a[pacAnnotationPrefix+"repo-url"], ".git") != "https://github.com/"+repo {
 		return false, errors.New("PipelineRun repository annotation does not match the repository")
 	}
-	event, branch := a[prefix+"event-type"], a[prefix+"branch"]
+	event, branch := a[pacAnnotationPrefix+"event-type"], a[pacAnnotationPrefix+"branch"]
 	if event == "" || branch == "" {
 		return false, runOriginError("PipelineRun event identity unavailable: missing event type or branch")
 	}
@@ -145,7 +190,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	}
 	switch event {
 	case "on-comment":
-		sourceBranch := a[prefix+"source-branch"]
+		sourceBranch := a[pacAnnotationPrefix+"source-branch"]
 		if strings.HasPrefix(branch, "refs/tags/") || strings.HasPrefix(sourceBranch, "refs/tags/") {
 			return false, nil
 		}
@@ -155,7 +200,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 		// GitHub commit comments use the same source and target branch and repository,
 		// even when Pipelines-as-Code attaches an associated PR number.
 		if strings.TrimPrefix(sourceBranch, "refs/heads/") == strings.TrimPrefix(branch, "refs/heads/") {
-			sourceRepo, isGitHub := strings.CutPrefix(strings.TrimSuffix(a[prefix+"source-repo-url"], ".git"), "https://github.com/")
+			sourceRepo, isGitHub := strings.CutPrefix(strings.TrimSuffix(a[pacAnnotationPrefix+"source-repo-url"], ".git"), "https://github.com/")
 			if !isGitHub || !refs.ValidRepository(sourceRepo) {
 				return false, runOriginError("PipelineRun PR comment identity unavailable: expected a GitHub source repository")
 			}
@@ -167,8 +212,8 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	default:
 		return false, nil
 	}
-	number, err := strconv.Atoi(a[prefix+"pull-request"])
-	if err != nil || number <= 0 || a[prefix+"pull-request"] != strconv.Itoa(number) {
+	number, err := strconv.Atoi(a[pacAnnotationPrefix+"pull-request"])
+	if err != nil || number <= 0 || a[pacAnnotationPrefix+"pull-request"] != strconv.Itoa(number) {
 		return false, runOriginError("PipelineRun PR event identity unavailable: expected a positive pull-request number")
 	}
 	return number == pr, nil

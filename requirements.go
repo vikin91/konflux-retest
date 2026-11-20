@@ -44,11 +44,15 @@ type (
 	}
 )
 
-var retagRecipes = map[string]retagRecipe{
-	"scanner-tag":   newRetagRecipe("scanner-tag", "SCANNER_VERSION"),
-	"collector-tag": newRetagRecipe("collector-tag", "COLLECTOR_VERSION"),
-	"fact-tag":      newRetagRecipe("fact-tag", "FACT_VERSION"),
-}
+var (
+	// ErrUnsupportedRetagContract indicates that the source does not describe an input the planner can verify.
+	ErrUnsupportedRetagContract = errors.New("unsupported retag input contract")
+	retagRecipes                = map[string]retagRecipe{
+		"scanner-tag":   newRetagRecipe("scanner-tag", "SCANNER_VERSION"),
+		"collector-tag": newRetagRecipe("collector-tag", "COLLECTOR_VERSION"),
+		"fact-tag":      newRetagRecipe("fact-tag", "FACT_VERSION"),
+	}
+)
 
 // newRetagRecipe matches a literal version-file recipe so source Makefiles need not be executed.
 func newRetagRecipe(target, versionFile string) retagRecipe {
@@ -70,7 +74,7 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 			return document, err
 		}
 		if err := yaml.Unmarshal(data, &document); err != nil {
-			return document, fmt.Errorf("could not parse %s", path)
+			return document, fmt.Errorf("%w: could not parse %s", ErrUnsupportedRetagContract, path)
 		}
 		return document, nil
 	}
@@ -79,14 +83,14 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 		return result, err
 	}
 	if run.Kind != "PipelineRun" || run.Spec.PipelineRef.Name != "retag-pipeline" || run.Spec.PipelineRef.Resolver != "" || run.Spec.PipelineSpec != nil || run.Metadata.Annotations["pipelinesascode.tekton.dev/pipeline"] != "" {
-		return result, errors.New("unsupported retag PipelineRun definition")
+		return result, fmt.Errorf("%w: unsupported retag PipelineRun definition", ErrUnsupportedRetagContract)
 	}
 	pipeline, err := readYAML(".tekton/retag-pipeline.yaml")
 	if err != nil {
 		return result, err
 	}
 	if pipeline.Kind != "Pipeline" {
-		return result, errors.New("expected retag Pipeline definition")
+		return result, fmt.Errorf("%w: expected retag Pipeline definition", ErrUnsupportedRetagContract)
 	}
 	params := make(map[string]string)
 	for _, param := range pipeline.Spec.Params {
@@ -96,28 +100,28 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 	}
 	overrides, err := paramValues(run.Spec.Params)
 	if err != nil {
-		return result, fmt.Errorf("invalid parameters in .tekton/%s.yaml: %w", job, err)
+		return result, fmt.Errorf("%w: invalid parameters in .tekton/%s.yaml: %v", ErrUnsupportedRetagContract, job, err)
 	}
 	for name, value := range overrides {
 		params[name] = value
 	}
 	if params["revision"] != "{{revision}}" || (params["git-url"] != "{{source_url}}" && params["git-url"] != "{{repo_url}}") {
-		return result, errors.New("unsupported retag source repository or revision binding")
+		return result, fmt.Errorf("%w: unsupported retag source repository or revision binding", ErrUnsupportedRetagContract)
 	}
 	if err := validateRetagTasks(pipeline.Spec.Tasks); err != nil {
-		return result, fmt.Errorf("invalid .tekton/retag-pipeline.yaml: %w", err)
+		return result, fmt.Errorf("%w: invalid .tekton/retag-pipeline.yaml: %v", ErrUnsupportedRetagContract, err)
 	}
 	target := params["input-image-tag-makefile-target"]
 	recipe, ok := retagRecipes[target]
 	if !ok {
-		return result, errors.New("unsupported input image Makefile target")
+		return result, fmt.Errorf("%w: unsupported input image Makefile target", ErrUnsupportedRetagContract)
 	}
 	makefile, err := readFile("Makefile")
 	if err != nil {
 		return result, err
 	}
 	if len(recipe.pattern.FindAll(makefile, -1)) != 1 {
-		return result, fmt.Errorf("unsupported Makefile recipe for %s; cannot resolve the exact input tag", target)
+		return result, fmt.Errorf("%w: unsupported Makefile recipe for %s; cannot resolve the exact input tag", ErrUnsupportedRetagContract, target)
 	}
 	version, err := readFile(recipe.versionFile)
 	if err != nil {
@@ -125,14 +129,14 @@ func resolveImage(readFile func(string) ([]byte, error), job, sourceURL, revisio
 	}
 	suffix, ok := params["image-tag-suffix"]
 	if !ok {
-		return result, errors.New("missing image-tag-suffix parameter")
+		return result, fmt.Errorf("%w: missing image-tag-suffix parameter", ErrUnsupportedRetagContract)
 	}
 	result = imageRequirement{
 		repository: params["input-image-repo"], tag: strings.TrimRight(string(version), "\n") + suffix,
 		sourceURL: sourceURL, revision: revision,
 	}
 	if !imageRepositoryPattern.MatchString(result.repository) || strings.Contains(result.repository, "..") || !imageTagPattern.MatchString(result.tag) {
-		return imageRequirement{}, errors.New("unsupported input image repository or tag; expected a literal Quay image reference")
+		return imageRequirement{}, fmt.Errorf("%w: unsupported input image repository or tag; expected a literal Quay image reference", ErrUnsupportedRetagContract)
 	}
 	return result, nil
 }
@@ -195,7 +199,8 @@ func validateRetagTasks(tasks []tektonTask) error {
 		switch digest {
 		case "sha256:cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3",
 			"sha256:ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c",
-			"sha256:48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef":
+			"sha256:48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef",
+			"sha256:6d1341c9d70c94f484668b9af3f618654d4743ce151a4b529ad19572960f8b82":
 			knownBundle = true
 		}
 		if task.TaskSpec != nil || task.TaskRef.Resolver != "bundles" || ref["name"] != contract.task || ref["kind"] != "task" || !pinned || !knownBundle {
