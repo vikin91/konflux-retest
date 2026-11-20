@@ -9,7 +9,68 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 )
+
+func TestScopeChecksPreservesIndependentResults(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		fact := buildCheck("fact-on-push", "completed", "failure")
+		older := buildCheck("checks", "completed", "success")
+		checks := buildCheck("checks", "completed", "failure")
+		checks.ID++
+		c := githubClient{identity: func(ctx context.Context, check checkRun, _, _, _ string, _ int) (runObservation, error) {
+			switch check {
+			case fact:
+				<-ctx.Done()
+				return runObservation{}, ctx.Err()
+			case checks:
+				time.Sleep(time.Second)
+				return runObservation{matches: true}, nil
+			default:
+				t.Error("an older superseded run reached the identity lookup")
+				return runObservation{}, errors.New("archive unavailable")
+			}
+		}}
+		start := time.Now()
+		scoped, warnings, err := c.scopeChecks(t.Context(), []checkRun{fact, older, checks}, "stackrox/fact", Result{SHA: "head", Tag: "0.3.12"})
+		if time.Since(start) != runLookupTimeout || !errors.Is(err, context.DeadlineExceeded) || len(warnings) != 1 {
+			t.Fatalf("duration=%v warnings=%v err=%v", time.Since(start), warnings, err)
+		}
+		if len(scoped) != 2 || scoped[0].ID != checks.ID || !scoped[0].identityKnown || scoped[1].Status != "unknown" {
+			t.Fatalf("missing partial results: %+v", scoped)
+		}
+		if plan := planRetries("stackrox/fact", scoped, nil); !slices.Equal(plan.jobs, []string{"checks"}) {
+			t.Fatalf("lookup timeout suppressed an independent retry: %+v", plan)
+		}
+	})
+}
+
+func TestScopeChecksBoundsHistorySearch(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := githubClient{identity: func(ctx context.Context, _ checkRun, _, _, _ string, _ int) (runObservation, error) {
+			timer := time.NewTimer(9 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+				return runObservation{}, nil
+			case <-ctx.Done():
+				return runObservation{}, ctx.Err()
+			}
+		}}
+		var checks []checkRun
+		for id := range 10 {
+			check := buildCheck("fact-on-push", "completed", "failure")
+			check.ID = int64(id + 1)
+			checks = append(checks, check)
+		}
+		start := time.Now()
+		scoped, _, err := c.scopeChecks(t.Context(), checks, "stackrox/fact", Result{SHA: "head", Tag: "0.3.12"})
+		if time.Since(start) != scopeTimeout || !errors.Is(err, context.DeadlineExceeded) || len(scoped) != 1 || scoped[0].ID != 7 || scoped[0].Status != "unknown" {
+			t.Fatalf("duration=%v scoped=%+v err=%v", time.Since(start), scoped, err)
+		}
+	})
+}
 
 func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 	for name, tc := range map[string]struct {

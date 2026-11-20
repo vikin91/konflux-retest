@@ -14,7 +14,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 	const image = "quay.io/rhacs-eng/release-main:observed-build-fast"
 	const digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	for name, tc := range map[string]struct {
-		archive, wantError                string
+		archive, wantError, wantWarning   string
 		outputs                           map[string]string
 		legacy, mismatch, wrongPR         bool
 		unverified, duplicate, structured bool
@@ -25,8 +25,8 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 		"wrong commit":                {mismatch: true, wantError: "PipelineRun SHA annotation"},
 		"archive wrong commit":        {archive: "valid", mismatch: true, wantError: "PipelineRun SHA annotation"},
 		"different PR":                {archive: "valid", wrongPR: true},
-		"archive missing PR number":   {archive: "missing PR", wantError: "PR event identity unavailable"},
-		"archive malformed PR number": {archive: "malformed PR", wantError: "PR event identity unavailable"},
+		"archive missing PR number":   {archive: "missing PR", wantWarning: "PR event identity unavailable"},
+		"archive malformed PR number": {archive: "malformed PR", wantWarning: "PR event identity unavailable"},
 		"archive multiple records":    {archive: "multiple", wantError: "records=2, more_pages=false"},
 		"archive continuation token":  {archive: "paginated", wantError: "records=1, more_pages=true"},
 		"archive missing records":     {archive: "missing", wantError: "records=0, more_pages=false"},
@@ -145,6 +145,9 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 			if tc.wantError == "" && err != nil || tc.wantError != "" && (err == nil || !strings.Contains(err.Error(), tc.wantError)) {
 				t.Fatalf("observation error=%v", err)
 			}
+			if tc.wantWarning != "" && !strings.Contains(strings.Join(result.Warnings, "\n"), tc.wantWarning) {
+				t.Fatalf("warnings=%v, want %q", result.Warnings, tc.wantWarning)
+			}
 			if tc.wrongPR {
 				if len(result.Runs) != 0 || len(result.Jobs) != 0 {
 					t.Fatal("different PR contributed to retry planning", result)
@@ -155,7 +158,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 				t.Fatalf("runs=%+v", result.Runs)
 			}
 			run := result.Runs[0]
-			known := !tc.unverified && tc.wantError == ""
+			known := !tc.unverified && tc.wantError == "" && tc.wantWarning == ""
 			if run.IdentityKnown != known {
 				t.Fatalf("identity known=%t", run.IdentityKnown)
 			}
@@ -178,7 +181,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 			if known && !slices.Contains(result.Jobs, "main-on-push") {
 				t.Fatal("image output changed retry eligibility", result)
 			}
-			if tc.wantError != "" && (run.Status != "unknown" || run.Eligible || len(result.Jobs) != 0) {
+			if (tc.wantError != "" || tc.wantWarning != "") && (run.Status != "unknown" || run.Eligible || len(result.Jobs) != 0) {
 				t.Fatalf("unknown identity authorized a retry: %+v", result)
 			}
 			if tc.unverified && requests != 0 {

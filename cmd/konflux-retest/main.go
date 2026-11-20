@@ -25,14 +25,16 @@ type options struct {
 	verifyPull bool
 }
 
+const assessmentTimeout = 2 * time.Minute
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, konfluxTokens())
 	stop()
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
+func run(ctx context.Context, args []string, out, diagnostics io.Writer, konfluxToken func(context.Context, string) (string, error)) int {
 	opts, err := parseOptions(args, diagnostics)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -47,10 +49,11 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		return 1
 	}
 	config := konfluxretest.Config{
-		GitHubToken:  token,
-		QuayUsername: os.Getenv("QUAY_USERNAME"),
-		QuayPassword: os.Getenv("QUAY_PASSWORD"),
-		KonfluxToken: konfluxTokens(),
+		VerifyRunIdentity: true,
+		GitHubToken:       token,
+		QuayUsername:      os.Getenv("QUAY_USERNAME"),
+		QuayPassword:      os.Getenv("QUAY_PASSWORD"),
+		KonfluxToken:      konfluxToken,
 	}
 	if opts.verifyPull {
 		config.PullImage = dockerPull
@@ -60,7 +63,9 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		result, err := konfluxretest.CheckPR(ctx, config, opts.repo, pr)
+		checkCtx, cancel := context.WithTimeout(ctx, assessmentTimeout)
+		result, err := konfluxretest.CheckPR(checkCtx, config, opts.repo, pr)
+		cancel()
 		printResult(out, result)
 		if err != nil {
 			code = 1
@@ -73,7 +78,9 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer) int {
 		if i > 0 {
 			fmt.Fprintln(out)
 		}
-		result, err := konfluxretest.CheckTag(ctx, config, opts.repo, tag)
+		checkCtx, cancel := context.WithTimeout(ctx, assessmentTimeout)
+		result, err := konfluxretest.CheckTag(checkCtx, config, opts.repo, tag)
+		cancel()
 		printResult(out, result)
 		if err != nil {
 			code = 1
@@ -112,7 +119,9 @@ Authentication (first available source wins):
 Tokens are never printed or saved.
 A fine-grained token needs repository access, Pull requests: read, Checks: read,
 and Contents: read for tags, pipeline definitions, and version pins.
-Only github.com is supported. Konflux logs use a matching saved oc login.
+Only github.com is supported. A matching saved oc login lets the tool verify
+which PR or tag triggered each run. Jobs without verified identity receive no
+retry comment.
 Retag decisions use the latest Konflux wait-for-image log when conclusive,
 otherwise registry checks (anonymous, or QUAY_USERNAME and QUAY_PASSWORD).
 Use --verify-pull before --prs or --tags to check with local docker pull first.

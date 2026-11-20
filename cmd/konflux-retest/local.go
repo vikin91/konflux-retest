@@ -7,22 +7,26 @@ import (
 	"net/url"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 // konfluxTokens reuses a matching oc context without changing the current context.
 // Credentials stay in memory and are never included in errors or subprocess args.
 func konfluxTokens() func(context.Context, string) (string, error) {
-	tokens := make(map[string]string)
+	var tokens sync.Map
 	return func(ctx context.Context, host string) (string, error) {
-		if token := tokens[host]; token != "" {
-			return token, nil
+		if token, ok := tokens.Load(host); ok {
+			return token.(string), nil
 		}
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		data, err := exec.CommandContext(ctx, "oc", "config", "view", "-o", "json").Output()
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		if err != nil {
-			return "", errors.New("Konflux logs require oc and a matching saved login")
+			return "", errors.New("Konflux lookups require oc and a matching saved login")
 		}
 		var config struct {
 			CurrentContext string `json:"current-context"`
@@ -57,11 +61,14 @@ func konfluxTokens() func(context.Context, string) (string, error) {
 			return "", errors.New("no saved oc context matches the Konflux cluster")
 		}
 		data, err = exec.CommandContext(ctx, "oc", "--context", contextName, "whoami", "-t").Output()
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		if err != nil || strings.TrimSpace(string(data)) == "" {
 			return "", errors.New("cannot read the saved Konflux login")
 		}
 		token := strings.TrimSpace(string(data))
-		tokens[host] = token
+		tokens.Store(host, token)
 		return token, nil
 	}
 }

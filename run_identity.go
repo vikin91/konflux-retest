@@ -14,10 +14,16 @@ import (
 	"github.com/vikin91/konflux-retest/internal/refs"
 )
 
-type runObservation struct {
-	matches               bool
-	imageURL, imageDigest string
-}
+type (
+	runObservation struct {
+		matches               bool
+		imageURL, imageDigest string
+	}
+	// runOriginError identifies readable PipelineRun metadata with insufficient scope evidence.
+	runOriginError string
+)
+
+func (e runOriginError) Error() string { return string(e) }
 
 // runIdentity verifies original PipelineRun annotations, never lossy Kubernetes labels.
 // Annotation keys follow Pipelines-as-Code pkg/kubeinteraction/labels.go.
@@ -132,7 +138,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	}
 	event, branch := a[prefix+"event-type"], a[prefix+"branch"]
 	if event == "" || branch == "" {
-		return false, errors.New("PipelineRun event identity unavailable: missing event type or branch")
+		return false, runOriginError("PipelineRun event identity unavailable: missing event type or branch")
 	}
 	if tag != "" {
 		return (event == "push" || event == "retest-comment") && branch == "refs/tags/"+tag, nil
@@ -144,14 +150,14 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 			return false, nil
 		}
 		if sourceBranch == "" {
-			return false, errors.New("PipelineRun PR comment identity unavailable: missing source branch")
+			return false, runOriginError("PipelineRun PR comment identity unavailable: missing source branch")
 		}
 		// GitHub commit comments use the same source and target branch and repository,
 		// even when Pipelines-as-Code attaches an associated PR number.
 		if strings.TrimPrefix(sourceBranch, "refs/heads/") == strings.TrimPrefix(branch, "refs/heads/") {
 			sourceRepo, isGitHub := strings.CutPrefix(strings.TrimSuffix(a[prefix+"source-repo-url"], ".git"), "https://github.com/")
 			if !isGitHub || !refs.ValidRepository(sourceRepo) {
-				return false, errors.New("PipelineRun PR comment identity unavailable: expected a GitHub source repository")
+				return false, runOriginError("PipelineRun PR comment identity unavailable: expected a GitHub source repository")
 			}
 			if strings.EqualFold(sourceRepo, repo) {
 				return false, nil
@@ -163,7 +169,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 	}
 	number, err := strconv.Atoi(a[prefix+"pull-request"])
 	if err != nil || number <= 0 || a[prefix+"pull-request"] != strconv.Itoa(number) {
-		return false, errors.New("PipelineRun PR event identity unavailable: expected a positive pull-request number")
+		return false, runOriginError("PipelineRun PR event identity unavailable: expected a positive pull-request number")
 	}
 	return number == pr, nil
 }

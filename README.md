@@ -179,9 +179,17 @@ gh auth login --hostname github.com
 
 The tool never prints or saves the token. An invalid environment token is reported as an API error; it does not silently switch accounts by falling back to the CLI login.
 
-A fine-grained token needs access to the requested repositories, **Pull requests: read**, **Checks: read**, and **Contents: read** (including access to the head repository for fork PRs). Only github.com is supported. Archived Konflux logs use `oc` and an existing context for the cluster linked by the check. The current context is not changed. Without a matching login, the tool falls back to registry checks.
+A fine-grained token needs access to the requested repositories, **Pull requests: read**, **Checks: read**, and **Contents: read** (including access to the head repository for fork PRs). Only github.com is supported.
 
 References: [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_token), [GitHub CLI environment variables](https://cli.github.com/manual/gh_help_environment), [GitHub checks API](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference).
+
+## Konflux login
+
+The CLI uses a saved `oc` login for the cluster linked by each check. It reads
+PipelineRun metadata from the cluster API or Tekton Results to identify the PR
+or tag that started the run. It also uses the login for archived retag logs.
+If the CLI cannot verify a run, it withholds that job's retry and can still
+suggest independent verified jobs.
 
 ## Embedded job catalog
 
@@ -210,7 +218,7 @@ The policy catalog in `planner.go` recognizes both `Red Hat Konflux / SCENARIO` 
 
 ## Selection rules
 
-1. Resolve the PR head or tag to a commit SHA and query all pages of its check runs. For repeated check names, use the newest check-run ID, so a successful rerun supersedes an older failure.
+1. Resolve the PR head or tag to a commit SHA and query all pages of Konflux checks. Examine each job's newest attempts first and use the newest run verified for the requested PR or tag. A newer attempt with unknown origin can withhold that job's retry.
 2. Check input readiness for candidate `retag-collector`, `retag-fact`, and Scanner V2 retags as described below. Suggest completed checks with conclusions `failure`, `timed_out`, `cancelled`, `stale`, or `startup_failure` in the earliest unfinished milestone. Include failed independent `checks` at the same time. Jobs within a milestone can run in parallel.
 3. Require every applicable predecessor in earlier milestones to have completed successfully before suggesting downstream jobs. Pending, missing, skipped, neutral, or action-required checks are not successful image producers and receive no retry command. Existing failures in their own milestone can still be retried.
 4. Never retry policy checks automatically. Their failures may need CVE remediation or an upstream build fix.
@@ -270,13 +278,19 @@ link when available, identity confidence, and planner eligibility.
 `Result.Advisories` exposes commit-scoped Conforma failures, including optional
 development scenarios. These findings do not emit policy retries.
 
-Set `Config.VerifyRunIdentity` to require original PipelineRun annotations
-matching the repository, SHA, check ID, and PR number or complete tag ref.
-This requires `KonfluxToken` access to the cluster API or Tekton Results archive.
-Missing or ambiguous metadata leaves affected jobs unknown; unrelated verified
-jobs remain usable with a partial error. The default CLI behavior is unchanged.
-Strict reads request all check runs so a newer branch build cannot hide an older
-matching tag build on the same commit.
+The CLI requires verified run identity. For library calls, set
+`Config.VerifyRunIdentity` to use the same requirement. It checks the
+repository, SHA, check ID, and PR number or full tag ref in the original
+PipelineRun annotations. Supply `KonfluxToken` for the cluster API or Tekton
+Results archive. Without verification, the library plans from commit-level
+check evidence.
+
+Identity checks request all runs and examine job histories in parallel.
+Each lookup has up to 10 seconds, with up to 5 seconds for the live API
+and time reserved for the archive. The identity stage has up to 30 seconds
+within the caller's deadline. Missing origin metadata produces a warning.
+Lookup failures can return a partial error with usable results for unrelated
+verified jobs.
 
 The annotation contract follows upstream
 [Pipelines-as-Code labels.go](https://github.com/tektoncd/pipelines-as-code/blob/ae3aab8c3a54d46fc8c52f65484b78df532d02dd/pkg/kubeinteraction/labels.go)

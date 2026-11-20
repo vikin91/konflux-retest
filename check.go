@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -21,7 +20,8 @@ type (
 	// Its zero value uses anonymous HTTP requests without local commands or log access.
 	Config struct {
 		// VerifyRunIdentity requires PipelineRun evidence matching the PR or full tag ref.
-		// Without readable evidence, affected jobs remain unknown rather than retryable.
+		// Without readable evidence, affected jobs remain unknown and ineligible.
+		// Leave this enabled when using Jobs to automate retries.
 		VerifyRunIdentity bool
 		GitHubToken       string
 		QuayUsername      string
@@ -31,11 +31,11 @@ type (
 		// The client is copied; redirect policies are set to protect service credentials.
 		HTTPClient *http.Client
 		// KonfluxToken returns a credential only for an explicitly trusted cluster API hostname.
-		// The credential also authenticates to that cluster's Tekton Results route.
+		// The credential can also access Tekton Results. Lookups may call it concurrently.
 		// Nil disables Konflux access.
 		KonfluxToken func(context.Context, string) (string, error)
 		// AllowKonfluxLookup optionally authorizes a lookup before KonfluxToken runs.
-		// appID is the check's GitHub App ID, or zero if GitHub omitted it.
+		// Lookups may call it concurrently with the check's GitHub App ID.
 		AllowKonfluxLookup func(ctx context.Context, appID int64, apiHost, namespace string) bool
 		// PullImage optionally verifies image existence. Return an empty reason on success,
 		// a nonempty reason for a confirmed unusable image, or an error if inconclusive.
@@ -231,42 +231,16 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 			result.Advisories = append(result.Advisories, Advisory{ID: check.ID, Name: name, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL)})
 		}
 	}
-	var identityErrors []error
+	var identityErr error
 	var identityWarnings []string
 	const noVerifiedBuild = "No verified build checks match the requested tag or PR."
 	if c.verifyIdentity {
-		scoped := make([]checkRun, 0, len(checks))
-		for _, check := range checks {
-			if !isKonflux(check) || ignoredKonfluxCheck(check.Name) {
-				continue
-			}
-			if check.startFailure != nil || policyCheck.MatchString(strings.TrimPrefix(check.Name, checkPrefix)) {
-				scoped = append(scoped, check)
-				continue
-			}
-			observed, identityErr := runObservation{}, errors.New("PipelineRun identity access is unavailable")
-			if c.identity != nil {
-				observed, identityErr = c.identity(ctx, check, repo, result.SHA, result.Tag, result.prNumber)
-			}
-			if identityErr != nil {
-				identityErr = fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, reportURL(check.DetailsURL), identityErr)
-				identityErrors = append(identityErrors, identityErr)
-				identityWarnings = append(identityWarnings, "identity unknown: "+identityErr.Error())
-				check.Status = "unknown"
-				check.Conclusion = ""
-				scoped = append(scoped, check)
-			} else if observed.matches {
-				check.identityKnown = true
-				check.imageURL, check.imageDigest = observed.imageURL, observed.imageDigest
-				scoped = append(scoped, check)
-			}
-		}
-		if len(scoped) == 0 {
+		checks, identityWarnings, identityErr = c.scopeChecks(ctx, checks, repo, result)
+		if len(checks) == 0 {
 			result.Action = ActionWait
 			result.Message = noVerifiedBuild
 			return result, nil
 		}
-		checks = preserveVerifiedRuns(scoped)
 	}
 	plan := planRetries(repo, checks, nil)
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
@@ -290,31 +264,10 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	slices.Sort(names)
 	for _, name := range names {
 		check := latest[name]
-		job := strings.TrimPrefix(name, checkPrefix)
-		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL), IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
+		job, prefixed := strings.CutPrefix(name, checkPrefix)
+		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL), IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: prefixed && slices.Contains(result.Jobs, job)})
 	}
-	return result, errors.Join(summarizeIdentityErrors(identityErrors), inputErr)
-}
-
-// preserveVerifiedRuns keeps creation failures with unknown scope from replacing verified run evidence.
-func preserveVerifiedRuns(checks []checkRun) []checkRun {
-	latest := map[string]checkRun{}
-	verified := map[string]checkRun{}
-	for _, check := range checks {
-		if old, exists := latest[check.Name]; !exists || check.ID > old.ID {
-			latest[check.Name] = check
-		}
-		if check.identityKnown && check.ID > verified[check.Name].ID {
-			verified[check.Name] = check
-		}
-	}
-	for name, check := range latest {
-		if run := verified[name]; check.startFailure != nil && run.ID > 0 {
-			run.startFailure = check.startFailure
-			latest[name] = run
-		}
-	}
-	return slices.Collect(maps.Values(latest))
+	return result, errors.Join(identityErr, inputErr)
 }
 
 func failedResult(result Result, err error) (Result, error) {

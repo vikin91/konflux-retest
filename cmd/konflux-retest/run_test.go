@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +11,10 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func fixtureKonfluxToken(context.Context, string) (string, error) {
+	return "test-konflux-token", nil
+}
 
 func TestRunContinuesAfterLookupFailure(t *testing.T) {
 	t.Setenv("GH_TOKEN", "test-token")
@@ -48,7 +53,7 @@ func TestRunContinuesAfterLookupFailure(t *testing.T) {
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			var out, diagnostics strings.Builder
-			code := run(t.Context(), tt.args, &out, &diagnostics)
+			code := run(t.Context(), tt.args, &out, &diagnostics, fixtureKonfluxToken)
 			if code != 1 || diagnostics.Len() != 0 || len(paths) < 2 || paths[0] != tt.first || paths[1] != tt.second {
 				t.Fatalf("code=%d stderr=%q paths=%v", code, diagnostics.String(), paths)
 			}
@@ -69,14 +74,16 @@ func TestRunCollectorPR(t *testing.T) {
 		case "/repos/stackrox/collector/pulls/4307":
 			body = `{"state":"open","head":{"sha":"head"}}`
 		case "/repos/stackrox/collector/commits/head/check-runs":
-			body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / collector-on-push","status":"completed","conclusion":"failure"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-5-0 / collector-5-0","status":"completed","conclusion":"cancelled"}]}`
+			body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / collector-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/collector","status":"completed","conclusion":"failure"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-5-0 / collector-5-0","status":"completed","conclusion":"cancelled"}]}`
+		case "/apis/tekton.dev/v1/namespaces/builds/pipelineruns/collector":
+			body = `{"metadata":{"name":"collector","namespace":"builds","annotations":{"pipelinesascode.tekton.dev/check-run-id":"1","pipelinesascode.tekton.dev/sha":"head","pipelinesascode.tekton.dev/repo-url":"https://github.com/stackrox/collector","pipelinesascode.tekton.dev/event-type":"pull_request","pipelinesascode.tekton.dev/branch":"master","pipelinesascode.tekton.dev/pull-request":"4307"}}}`
 		default:
 			t.Fatalf("unexpected request: %s", r.URL)
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	var out, diagnostics strings.Builder
-	code := run(t.Context(), []string{"--repo", "collector", "--prs", "4307"}, &out, &diagnostics)
+	code := run(t.Context(), []string{"--repo", "collector", "--prs", "4307"}, &out, &diagnostics, fixtureKonfluxToken)
 	want := "---\nhttps://github.com/stackrox/collector/pull/4307\n\nNext action: Retest\n/konflux-retest collector-on-push\n\nWarnings:\nNone.\n"
 	if code != 0 || diagnostics.Len() != 0 || out.String() != want {
 		t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
@@ -87,18 +94,22 @@ func TestRunFactTag(t *testing.T) {
 	t.Setenv("GH_TOKEN", "test-token")
 	const sha = "7826bed24314e774deb43ae5db1e7b30b1eda796"
 	tests := map[string]struct {
-		repo, status, conclusion, want string
+		repo, status, conclusion, ref, want string
 	}{
 		"should wait only for the running FACT build": {
-			repo: "stackrox/fact", status: "in_progress",
+			repo: "stackrox/fact", status: "in_progress", ref: "refs/tags/0.3.12",
 			want: "Next action: Wait\nfact-on-push (in_progress).\n\nWarnings:\nMilestone 1 is not ready: fact-on-push (in_progress).\n",
 		},
 		"should retry the failed FACT build using the short repository name": {
-			repo: "fact", status: "completed", conclusion: "failure",
+			repo: "fact", status: "completed", conclusion: "failure", ref: "refs/tags/0.3.12",
 			want: "Next action: Retest\nPost each command below as a separate GitHub comment.\n/retest fact-on-push tag:0.3.12\n\nWarnings:\nNone.\n",
 		},
+		"should withhold a branch failure on the same commit": {
+			repo: "stackrox/fact", status: "completed", conclusion: "failure", ref: "refs/heads/main",
+			want: "Next action: Wait\nNo verified build checks match the requested tag or PR.\n\nWarnings:\nNone.\n",
+		},
 		"should preserve a successful FACT build": {
-			repo: "stackrox/fact", status: "completed", conclusion: "success",
+			repo: "stackrox/fact", status: "completed", conclusion: "success", ref: "refs/tags/0.3.12",
 			want: "Next action: None\nNo build retests needed.\n\nWarnings:\nNone.\n",
 		},
 	}
@@ -112,14 +123,16 @@ func TestRunFactTag(t *testing.T) {
 				case "/repos/stackrox/fact/commits/refs/tags/0.3.12":
 					body = `{"sha":"` + sha + `"}`
 				case "/repos/stackrox/fact/commits/" + sha + "/check-runs":
-					body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / fact-on-push","status":"` + tt.status + `","conclusion":"` + tt.conclusion + `"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-4-11 / fact-4-11","status":"completed","conclusion":"cancelled"}]}`
+					body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / fact-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/fact","status":"` + tt.status + `","conclusion":"` + tt.conclusion + `"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-4-11 / fact-4-11","status":"completed","conclusion":"cancelled"}]}`
+				case "/apis/tekton.dev/v1/namespaces/builds/pipelineruns/fact":
+					body = `{"metadata":{"name":"fact","namespace":"builds","annotations":{"pipelinesascode.tekton.dev/check-run-id":"1","pipelinesascode.tekton.dev/sha":"` + sha + `","pipelinesascode.tekton.dev/repo-url":"https://github.com/stackrox/fact","pipelinesascode.tekton.dev/event-type":"push","pipelinesascode.tekton.dev/branch":"` + tt.ref + `"}}}`
 				default:
 					t.Fatalf("unexpected request: %s", r.URL)
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			var out, diagnostics strings.Builder
-			code := run(t.Context(), []string{"--repo", tt.repo, "--tags", "0.3.12"}, &out, &diagnostics)
+			code := run(t.Context(), []string{"--repo", tt.repo, "--tags", "0.3.12"}, &out, &diagnostics, fixtureKonfluxToken)
 			want := "---\nhttps://github.com/stackrox/fact/commit/" + sha + "\nTag: 0.3.12\n\n" + tt.want
 			if code != 0 || diagnostics.Len() != 0 || out.String() != want {
 				t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
