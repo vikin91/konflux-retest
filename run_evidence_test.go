@@ -13,17 +13,18 @@ import (
 
 func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 	for name, tc := range map[string]struct {
-		newStatus, newOutcome string
-		unknown               bool
-		startFailure          bool
-		want                  []string
+		oldOutcome, newStatus, newOutcome string
+		unknown                           bool
+		startFailure                      bool
+		want                              []string
 	}{
-		"later branch does not hide tag": {"completed", "success", false, false, []string{"fact-on-push"}},
-		"unknown later run withholds":    {"completed", "failure", true, false, nil},
-		"later failed start withholds":   {"completed", "failure", false, true, nil},
+		"later branch does not hide tag":               {"failure", "completed", "success", false, false, []string{"fact-on-push"}},
+		"unknown later run withholds":                  {"failure", "completed", "failure", true, false, nil},
+		"later failed start preserves earlier failure": {"failure", "completed", "failure", false, true, nil},
+		"later failed start preserves earlier success": {"success", "completed", "failure", false, true, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			checks := []checkRun{{App: checkApp{ID: redHatKonfluxAppID}, ID: 10, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "failure"}, {App: checkApp{ID: redHatKonfluxAppID}, ID: 11, Name: checkPrefix + "fact-on-push", Status: tc.newStatus, Conclusion: tc.newOutcome}}
+			checks := []checkRun{{App: checkApp{ID: redHatKonfluxAppID}, ID: 10, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: tc.oldOutcome}, {App: checkApp{ID: redHatKonfluxAppID}, ID: 11, Name: checkPrefix + "fact-on-push", Status: tc.newStatus, Conclusion: tc.newOutcome}}
 			if tc.startFailure {
 				checks[1].Output.Title = "pipelinerun start failure"
 			}
@@ -52,8 +53,13 @@ func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 			if !tc.unknown && !tc.startFailure && (len(result.Runs) != 1 || result.Runs[0].ID != 10 || !result.Runs[0].IdentityKnown || !result.Runs[0].Eligible) {
 				t.Fatal(result.Runs)
 			}
-			if tc.startFailure && (result.Action != ActionWait || len(result.StartFailures) != 1 || result.StartFailures[0].CheckID != 11) {
-				t.Fatal(result)
+			if tc.startFailure {
+				if result.Action != ActionWait || len(result.StartFailures) != 1 || result.StartFailures[0].CheckID != 11 || !strings.Contains(strings.Join(result.Warnings, "\n"), "PR or tag unknown") {
+					t.Fatalf("missing separate creation failure evidence: %+v", result)
+				}
+				if len(result.Runs) != 1 || result.Runs[0].ID != 10 || !result.Runs[0].IdentityKnown || result.Runs[0].Eligible || result.Runs[0].Conclusion != tc.oldOutcome {
+					t.Fatalf("creation failure replaced verified run or authorized a retry: %+v", result.Runs)
+				}
 			}
 		})
 	}

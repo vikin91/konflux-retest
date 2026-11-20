@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -55,7 +56,8 @@ type (
 		Message  string
 		Jobs     []string
 		Warnings []string
-		// Runs exposes latest scoped job observations, including successful resets.
+		// Runs exposes the latest scoped job observations. A newer unscoped
+		// creation failure can withhold a retry while the verified run remains visible.
 		Runs []Run
 		// Advisories includes Conforma failures even outside retry prerequisites.
 		Advisories []Advisory
@@ -264,7 +266,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 			result.Message = noVerifiedBuild
 			return result, nil
 		}
-		checks = scoped
+		checks = preserveVerifiedRuns(scoped)
 	}
 	plan := planRetries(repo, checks, nil)
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
@@ -292,6 +294,27 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL), IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: slices.Contains(result.Jobs, job)})
 	}
 	return result, errors.Join(summarizeIdentityErrors(identityErrors), inputErr)
+}
+
+// preserveVerifiedRuns keeps creation failures with unknown scope from replacing verified run evidence.
+func preserveVerifiedRuns(checks []checkRun) []checkRun {
+	latest := map[string]checkRun{}
+	verified := map[string]checkRun{}
+	for _, check := range checks {
+		if old, exists := latest[check.Name]; !exists || check.ID > old.ID {
+			latest[check.Name] = check
+		}
+		if check.identityKnown && check.ID > verified[check.Name].ID {
+			verified[check.Name] = check
+		}
+	}
+	for name, check := range latest {
+		if run := verified[name]; check.startFailure != nil && run.ID > 0 {
+			run.startFailure = check.startFailure
+			latest[name] = run
+		}
+	}
+	return slices.Collect(maps.Values(latest))
 }
 
 func failedResult(result Result, err error) (Result, error) {

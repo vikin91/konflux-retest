@@ -85,8 +85,8 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		check := latest[fullName]
 		name, prefixed := strings.CutPrefix(fullName, checkPrefix)
 		if failure := check.startFailure; failure != nil {
-			plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) reported a PipelineRun creation failure: %s", fullName, check.ID, failure.Reason))
-			plan.noRetryAction = "Wait: Inspect the reported PipelineRun creation failures."
+			plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) reported a PipelineRun creation failure on this commit. PR or tag unknown. %s", fullName, failure.CheckID, failure.Reason))
+			plan.noRetryAction = "Wait: PipelineRun creation failed for a check with unknown PR or tag."
 		}
 		switch {
 		case prefixed && knownJob(name, stages):
@@ -171,7 +171,9 @@ func isKonflux(check checkRun) bool {
 	return check.App.ID == redHatKonfluxAppID
 }
 
-func passed(check checkRun) bool { return check.Status == "completed" && check.Conclusion == "success" }
+func passed(check checkRun) bool {
+	return check.startFailure == nil && check.Status == "completed" && check.Conclusion == "success"
+}
 
 func retryable(check checkRun) bool {
 	return check.startFailure == nil && check.Status == "completed" && slices.Contains([]string{"failure", "timed_out", "cancelled", "stale", "startup_failure"}, check.Conclusion)
@@ -179,6 +181,9 @@ func retryable(check checkRun) bool {
 
 func checkState(check checkRun) string {
 	if check.startFailure != nil {
+		if check.startFailure.CheckID != check.ID {
+			return "newer PipelineRun creation failure has unknown PR or tag"
+		}
 		return "PipelineRun creation failed"
 	}
 	if check.Status != "completed" {
