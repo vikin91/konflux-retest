@@ -2,6 +2,7 @@
   "check_runs": [
     {
       "id": 134464223121,
+      "app": {"id": 296509},
       "name": "Red Hat Konflux / main-on-push",
       "status": "completed",
       "conclusion": "failure",
@@ -13,6 +14,7 @@
     },
     {
       "id": 20,
+      "app": {"id": 296509},
       "name": "Red Hat Konflux / operator-on-push",
       "status": "completed",
       "conclusion": "failure",
@@ -24,6 +26,7 @@
     },
     {
       "id": 21,
+      "app": {"id": 296509},
       "name": "Red Hat Konflux / scanner-v4-on-push",
       "status": "completed",
       "conclusion": "failure",
@@ -35,6 +38,7 @@
     },
     {
       "id": 22,
+      "app": {"id": 296509},
       "name": "Red Hat Konflux / checks",
       "status": "completed",
       "conclusion": "failure",
@@ -46,6 +50,7 @@
     },
     {
       "id": 23,
+      "app": {"id": 296509},
       "name": "Red Hat Konflux / operator-bundle-on-push",
       "status": "completed",
       "conclusion": "startup_failure",

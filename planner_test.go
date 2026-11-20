@@ -7,7 +7,7 @@ import (
 )
 
 func buildCheck(name, status, conclusion string) checkRun {
-	return checkRun{ID: 1, Name: checkPrefix + name, Status: status, Conclusion: conclusion}
+	return checkRun{App: checkApp{ID: redHatKonfluxAppID}, ID: 1, Name: checkPrefix + name, Status: status, Conclusion: conclusion}
 }
 
 func successfulChecks() []checkRun {
@@ -100,14 +100,20 @@ func TestPlanRetries(t *testing.T) {
 			message: "WARNING: unknown Konflux check",
 		},
 		"should ignore obsolete failures when a newer run passes": {
-			extra: []checkRun{{ID: 0, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
+			extra: []checkRun{{App: checkApp{ID: redHatKonfluxAppID}, ID: 0, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
 		},
 		"should use newer failures instead of older successes": {
-			extra: []checkRun{{ID: 2, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
+			extra: []checkRun{{App: checkApp{ID: redHatKonfluxAppID}, ID: 2, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
 			want:  []string{"roxctl-on-push"},
 		},
 		"should ignore GitHub Actions checks mentioning Konflux": {
 			extra: []checkRun{{ID: 3, Name: "wait-for-konflux-images", Status: "completed", Conclusion: "failure"}},
+		},
+		"should ignore another app using a Konflux check name": {
+			extra: []checkRun{{App: checkApp{ID: 42}, ID: 3, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
+		},
+		"should ignore a Konflux check name without an app ID": {
+			extra: []checkRun{{ID: 3, Name: checkPrefix + "roxctl-on-push", Status: "completed", Conclusion: "failure"}},
 		},
 		"should leave successful jobs alone": {},
 	}
@@ -146,7 +152,7 @@ func TestPlanRetriesNoKonfluxChecks(t *testing.T) {
 
 func TestPlanRetriesRecognizesKonfluxApp(t *testing.T) {
 	check := checkRun{Name: "new unprefixed job", Status: "queued"}
-	check.App.Slug = "red-hat-konflux"
+	check.App.ID = redHatKonfluxAppID
 	plan := planRetries("stackrox/stackrox", []checkRun{check}, nil)
 	if len(plan.jobs) != 0 || !strings.Contains(strings.Join(plan.messages, ""), "WARNING: unknown Konflux check") {
 		t.Fatalf("unexpected plan: %+v", plan)
@@ -280,7 +286,7 @@ func TestPlanScannerRetries(t *testing.T) {
 			repo: "StackRox/Scanner",
 			checks: []checkRun{
 				buildCheck("scanner-on-push", "completed", "failure"),
-				{ID: 2, Name: checkPrefix + "scanner-on-push", Status: "completed", Conclusion: "success"},
+				{App: checkApp{ID: redHatKonfluxAppID}, ID: 2, Name: checkPrefix + "scanner-on-push", Status: "completed", Conclusion: "success"},
 			}, message: "scanner-db-on-push (missing)",
 		},
 		"should report Scanner policy failures without retrying them": {
@@ -333,7 +339,7 @@ func TestPlanCollectorRetries(t *testing.T) {
 			repo: "StackRox/Collector",
 			checks: []checkRun{
 				buildCheck("collector-on-push", "completed", "failure"),
-				{ID: 2, Name: checkPrefix + "collector-on-push", Status: "completed", Conclusion: "success"},
+				{App: checkApp{ID: redHatKonfluxAppID}, ID: 2, Name: checkPrefix + "collector-on-push", Status: "completed", Conclusion: "success"},
 			},
 		},
 		"should wait for a running build": {
@@ -397,7 +403,7 @@ func TestPlanFACTRetries(t *testing.T) {
 			repo: "StackRox/Fact",
 			checks: []checkRun{
 				buildCheck("fact-on-push", "completed", "failure"),
-				{ID: 2, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "success"},
+				{App: checkApp{ID: redHatKonfluxAppID}, ID: 2, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "success"},
 			},
 		},
 		"should wait for a running build": {

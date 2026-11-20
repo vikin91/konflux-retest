@@ -69,7 +69,7 @@ func TestRunCollectorPR(t *testing.T) {
 		case "/repos/stackrox/collector/pulls/4307":
 			body = `{"state":"open","head":{"sha":"head"}}`
 		case "/repos/stackrox/collector/commits/head/check-runs":
-			body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / collector-on-push","status":"completed","conclusion":"failure"},{"id":2,"name":"Red Hat Konflux / acs-conforma-dev-5-0 / collector-5-0","status":"completed","conclusion":"cancelled"}]}`
+			body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / collector-on-push","status":"completed","conclusion":"failure"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-5-0 / collector-5-0","status":"completed","conclusion":"cancelled"}]}`
 		default:
 			t.Fatalf("unexpected request: %s", r.URL)
 		}
@@ -112,7 +112,7 @@ func TestRunFactTag(t *testing.T) {
 				case "/repos/stackrox/fact/commits/refs/tags/0.3.12":
 					body = `{"sha":"` + sha + `"}`
 				case "/repos/stackrox/fact/commits/" + sha + "/check-runs":
-					body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / fact-on-push","status":"` + tt.status + `","conclusion":"` + tt.conclusion + `"},{"id":2,"name":"Red Hat Konflux / acs-conforma-dev-4-11 / fact-4-11","status":"completed","conclusion":"cancelled"}]}`
+					body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / fact-on-push","status":"` + tt.status + `","conclusion":"` + tt.conclusion + `"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / acs-conforma-dev-4-11 / fact-4-11","status":"completed","conclusion":"cancelled"}]}`
 				default:
 					t.Fatalf("unexpected request: %s", r.URL)
 				}

@@ -91,7 +91,7 @@ func TestImageOutputsRequireVerifiedRunIdentity(t *testing.T) {
 					case strings.HasSuffix(r.URL.Path, "/pulls/123"):
 						value = map[string]any{"state": "open", "head": map[string]any{"sha": "head", "repo": map[string]string{"full_name": "stackrox/stackrox"}}}
 					case strings.HasSuffix(r.URL.Path, "/check-runs"):
-						value = map[string]any{"check_runs": []any{map[string]any{"id": 17, "name": checkPrefix + "main-on-push", "status": "completed", "conclusion": "failure", "details_url": "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/run"}}}
+						value = map[string]any{"check_runs": []any{map[string]any{"id": 17, "app": checkApp{ID: redHatKonfluxAppID}, "name": checkPrefix + "main-on-push", "status": "completed", "conclusion": "failure", "details_url": "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/run"}}}
 					default:
 						t.Fatalf("unexpected GitHub path %s", r.URL.Path)
 					}

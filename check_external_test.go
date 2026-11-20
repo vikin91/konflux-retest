@@ -52,7 +52,7 @@ func TestExportedChecks(t *testing.T) {
 					if r.URL.Path != "/repos/stackrox/scanner/commits/head/check-runs" {
 						t.Fatalf("unexpected path: %s", r.URL.Path)
 					}
-					body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / scanner-on-push","status":"completed","conclusion":"failure","app":{"slug":"pipelines-as-code"}}]}`
+					body = `{"check_runs":[{"id":1,"name":"Red Hat Konflux / scanner-on-push","status":"completed","conclusion":"failure","app":{"id":296509,"slug":"red-hat-konflux"}}]}`
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header)}, nil
 			})}

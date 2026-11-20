@@ -168,9 +168,7 @@ func knownJob(name string, stages [][]string) bool {
 }
 
 func isKonflux(check checkRun) bool {
-	return strings.HasPrefix(strings.ToLower(check.Name), "red hat konflux") ||
-		strings.Contains(strings.ToLower(check.App.Slug), "konflux") ||
-		strings.Contains(strings.ToLower(check.App.Name), "konflux")
+	return check.App.ID == redHatKonfluxAppID
 }
 
 func passed(check checkRun) bool { return check.Status == "completed" && check.Conclusion == "success" }

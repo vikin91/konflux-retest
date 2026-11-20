@@ -12,7 +12,12 @@ import (
 	"time"
 )
 
+const redHatKonfluxAppID = 296509
+
 type (
+	checkApp struct {
+		ID int64 `json:"id"`
+	}
 	githubClient struct {
 		verifyIdentity bool
 		identity       func(context.Context, checkRun, string, string, string, int) (runObservation, error)
@@ -44,11 +49,7 @@ type (
 			Summary string `json:"summary"`
 			Text    string `json:"text"`
 		} `json:"output"`
-		App struct {
-			ID   int64  `json:"id"`
-			Slug string `json:"slug"`
-			Name string `json:"name"`
-		} `json:"app"`
+		App          checkApp `json:"app"`
 		startFailure *StartFailure
 	}
 )
@@ -108,7 +109,7 @@ func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun,
 		if c.verifyIdentity {
 			filter = "all"
 		}
-		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?filter=%s&per_page=100&page=%d", repo, url.PathEscape(sha), filter, page)
+		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?app_id=%d&filter=%s&per_page=100&page=%d", repo, url.PathEscape(sha), redHatKonfluxAppID, filter, page)
 		if err := c.get(ctx, path, &response); err != nil {
 			return nil, err
 		}

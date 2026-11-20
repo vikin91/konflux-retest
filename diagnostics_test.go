@@ -14,9 +14,9 @@ import (
 
 func TestIdentityErrorsRetainCheckContextAndBothServiceFailures(t *testing.T) {
 	checks := []checkRun{
-		{ID: 17, Name: checkPrefix + "fact-on-push", DetailsURL: "https://user:password@old.example/run?token=query-secret#fragment-secret"},
-		{ID: 18, Name: checkPrefix + "collector-on-push", DetailsURL: "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/build-18"},
-		{ID: 19, Name: checkPrefix + "acs-conforma-dev / main", Status: "completed", Conclusion: "failure", DetailsURL: "https://old.example/advisory?token=query-secret"},
+		{App: checkApp{ID: redHatKonfluxAppID}, ID: 17, Name: checkPrefix + "fact-on-push", DetailsURL: "https://user:password@old.example/run?token=query-secret#fragment-secret"},
+		{App: checkApp{ID: redHatKonfluxAppID}, ID: 18, Name: checkPrefix + "collector-on-push", DetailsURL: "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/build-18"},
+		{App: checkApp{ID: redHatKonfluxAppID}, ID: 19, Name: checkPrefix + "acs-conforma-dev / main", Status: "completed", Conclusion: "failure", DetailsURL: "https://old.example/advisory?token=query-secret"},
 	}
 	requests := 0
 	config := Config{VerifyRunIdentity: true, KonfluxToken: func(context.Context, string) (string, error) { return "cluster-secret", nil }, HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {

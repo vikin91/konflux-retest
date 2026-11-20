@@ -23,7 +23,7 @@ func TestStrictIdentityPreservesMatchingRunsAndPartialResults(t *testing.T) {
 		"later failed start withholds":   {"completed", "failure", false, true, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			checks := []checkRun{{ID: 10, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "failure"}, {ID: 11, Name: checkPrefix + "fact-on-push", Status: tc.newStatus, Conclusion: tc.newOutcome}}
+			checks := []checkRun{{App: checkApp{ID: redHatKonfluxAppID}, ID: 10, Name: checkPrefix + "fact-on-push", Status: "completed", Conclusion: "failure"}, {App: checkApp{ID: redHatKonfluxAppID}, ID: 11, Name: checkPrefix + "fact-on-push", Status: tc.newStatus, Conclusion: tc.newOutcome}}
 			if tc.startFailure {
 				checks[1].Output.Title = "pipelinerun start failure"
 			}
@@ -92,12 +92,12 @@ func TestStrictTagAssessmentExcludesDeveloperConformaFromIdentity(t *testing.T) 
 			var wantAdvisories []Advisory
 			if tc.includeDev {
 				for _, a := range []Advisory{dev, legacyDev} {
-					checks = append(checks, checkRun{ID: a.ID, Name: checkPrefix + a.Name, Status: "completed", Conclusion: a.Conclusion, DetailsURL: a.URL})
+					checks = append(checks, checkRun{App: checkApp{ID: redHatKonfluxAppID}, ID: a.ID, Name: checkPrefix + a.Name, Status: "completed", Conclusion: a.Conclusion, DetailsURL: a.URL})
 				}
 				wantAdvisories = append(wantAdvisories, legacyDev, dev)
 			}
 			if tc.job != "" {
-				check := checkRun{ID: 17, Name: checkPrefix + tc.job, Status: "completed", Conclusion: "failure", DetailsURL: "https://example.com/run"}
+				check := checkRun{App: checkApp{ID: redHatKonfluxAppID}, ID: 17, Name: checkPrefix + tc.job, Status: "completed", Conclusion: "failure", DetailsURL: "https://example.com/run"}
 				checks = append(checks, check)
 				if strings.HasPrefix(tc.job, "acs-conforma-") {
 					wantAdvisories = append(wantAdvisories, Advisory{ID: check.ID, Name: tc.job, Conclusion: check.Conclusion, URL: check.DetailsURL})

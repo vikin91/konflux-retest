@@ -27,7 +27,7 @@ func TestCheckPRPaginatesAndUsesCurrentHead(t *testing.T) {
 			fmt.Fprint(w, `{"state":"open","head":{"sha":"current-head"}}`)
 		case "/repos/stackrox/stackrox/commits/current-head/check-runs":
 			pages++
-			if r.URL.Query().Get("filter") != "latest" || r.URL.Query().Get("per_page") != "100" {
+			if r.URL.Query().Get("app_id") != "296509" || r.URL.Query().Get("filter") != "latest" || r.URL.Query().Get("per_page") != "100" {
 				t.Error("missing pagination parameters")
 			}
 			checks := []checkRun{}
