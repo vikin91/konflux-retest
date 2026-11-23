@@ -14,7 +14,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--full-auto` to post those same commands as separate comments using your configured GitHub login. The CLI prints the posted comment links alongside the usual report.
+By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--full-auto` to post those same commands using your configured GitHub login. The CLI posts one multiline comment per PR and one single-line commit comment per tag command. The report includes the posted comment links.
 
 The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--full-auto`. Go projects that import the analyzer have access to the read-only API.
 
@@ -152,7 +152,7 @@ Warnings:
 Milestone 1 is not ready: main-on-push (in_progress).
 ```
 
-PR suggestions use `/konflux-retest <job>`. Tag suggestions use `/retest <job> tag:<tag>` and must be posted on the linked commit, with **exactly one retest command per GitHub comment**. Multiple lines in one tag comment do not work reliably. For example, post these as two separate comments for tag `2.39.28`:
+PR suggestions use `/konflux-retest <job>` and can share one PR comment with one command per line. Tag suggestions use `/retest <job> tag:<tag>` and must be posted on the linked commit, with **exactly one retest command per GitHub comment**. For example, post these as two separate comments for tag `2.39.28`:
 
 ```text
 /retest scanner-on-push tag:2.39.28

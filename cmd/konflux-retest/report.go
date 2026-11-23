@@ -8,8 +8,8 @@ import (
 )
 
 type commentReport struct {
-	retries, starts []string
-	posted          bool
+	retries, starts, links []string
+	posted                 bool
 }
 
 func retryComments(result konfluxretest.Result) []string {
@@ -42,19 +42,29 @@ func printResult(out io.Writer, result konfluxretest.Result, comments commentRep
 	} else {
 		fmt.Fprintf(out, "\nNext action: %s\n", result.Action)
 	}
-	if len(result.Jobs) > 0 {
-		if !comments.posted && result.Tag != "" {
-			fmt.Fprintln(out, "Post each command below as a separate GitHub comment.")
-		}
-		printCommentLines(out, comments.retries, comments.posted)
-	} else if !startOnly {
+	if len(result.Jobs) == 0 && !startOnly {
 		fmt.Fprintln(out, result.Message)
 	}
-	if len(result.MissingPRJobs) > 0 {
-		if !startOnly {
+	if comments.posted {
+		if len(comments.links) == 0 {
+			fmt.Fprintln(out, "No comments confirmed.")
+		}
+		for _, link := range comments.links {
+			fmt.Fprintln(out, "Posted", link)
+		}
+	} else {
+		if len(comments.retries) > 0 && result.Tag != "" {
+			fmt.Fprintln(out, "Post each command below as a separate GitHub comment.")
+		}
+		for _, command := range comments.retries {
+			fmt.Fprintln(out, command)
+		}
+		if len(comments.starts) > 0 && !startOnly {
 			fmt.Fprintln(out, "\nStart missing builds:")
 		}
-		printCommentLines(out, comments.starts, comments.posted)
+		for _, command := range comments.starts {
+			fmt.Fprintln(out, command)
+		}
 	}
 	fmt.Fprintln(out, "\nWarnings:")
 	if len(result.Warnings) == 0 {
@@ -62,18 +72,5 @@ func printResult(out io.Writer, result konfluxretest.Result, comments commentRep
 	}
 	for _, warning := range result.Warnings {
 		fmt.Fprintln(out, warning)
-	}
-}
-
-func printCommentLines(out io.Writer, lines []string, posted bool) {
-	if posted && len(lines) == 0 {
-		fmt.Fprintln(out, "No comments confirmed.")
-	}
-	for _, line := range lines {
-		if posted {
-			fmt.Fprintln(out, "Posted", line)
-		} else {
-			fmt.Fprintln(out, line)
-		}
 	}
 }
