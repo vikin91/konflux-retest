@@ -14,7 +14,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-By default, the CLI only prints the `/konflux-retest` and `/retest` commands. Add `--full-auto` to post one GitHub comment per eligible failed job using your configured GitHub login. Add `--start-missing` to post verified missing-build commands for PRs too. The CLI prints the posted comment links alongside the usual report.
+By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--full-auto` to post those same commands as separate comments using your configured GitHub login. The CLI prints the posted comment links alongside the usual report.
 
 The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--full-auto`. Go projects that import the analyzer have access to the read-only API.
 
@@ -112,12 +112,6 @@ Post eligible retest comments for a PR or tag:
 ```sh
 ./konflux-retest --repo stackrox --full-auto --prs 23956
 ./konflux-retest --repo stackrox/scanner --full-auto --tags 2.39.27
-```
-
-To also post the verified commands shown under **Start missing builds** for a PR, use both flags:
-
-```sh
-./konflux-retest --repo stackrox --full-auto --start-missing --prs 23956
 ```
 
 The CLI checks the PR head or tag again before posting. If a comment fails, it reports the confirmed links, stops posting for that target, and exits with status 1 after processing the remaining targets. If a request may have succeeded, check GitHub before rerunning the command.

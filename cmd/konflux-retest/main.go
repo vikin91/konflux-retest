@@ -22,12 +22,11 @@ import (
 )
 
 type options struct {
-	repo         string
-	prs          []int
-	tags         []string
-	verifyPull   bool
-	fullAuto     bool
-	startMissing bool
+	repo       string
+	prs        []int
+	tags       []string
+	verifyPull bool
+	fullAuto   bool
 }
 
 const assessmentTimeout = 2 * time.Minute
@@ -76,15 +75,12 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 			code = 1
 		}
 		output := commentReport{retries: retryComments(result), starts: prComments(result.MissingPRJobs)}
-		comments := output.retries
-		if opts.startMissing {
-			comments = slices.Concat(comments, output.starts)
-		}
-		if writer == nil || len(comments) == 0 {
+		if writer == nil || len(output.retries)+len(output.starts) == 0 {
 			printResult(out, result, output)
 			return
 		}
 
+		comments := slices.Concat(output.retries, output.starts)
 		var links []string
 		var err error
 		if result.Tag == "" {
@@ -93,11 +89,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 			links, err = writer.PostTag(ctx, opts.repo, result.Tag, result.SHA, comments)
 		}
 		retryLinks := min(len(links), len(output.retries))
-		output.retries, output.postedRetries = links[:retryLinks], true
-		if opts.startMissing {
-			output.starts, output.postedStarts = links[retryLinks:], true
-		}
-		printResult(out, result, output)
+		printResult(out, result, commentReport{retries: links[:retryLinks], starts: links[retryLinks:], posted: true})
 		if err != nil {
 			fmt.Fprintf(diagnostics, "error: %s: %d of %d comment links confirmed: %v\n", result.URL, len(links), len(comments), err)
 			code = 1
@@ -135,8 +127,7 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "stackrox", "repository name under stackrox, or OWNER/REPO")
 	verifyPull := fs.Bool("verify-pull", false, "optionally verify input existence with local docker pull")
-	fullAuto := fs.Bool("full-auto", false, "post eligible retest comments to GitHub")
-	startMissing := fs.Bool("start-missing", false, "also post verified missing-build commands with --full-auto for PRs")
+	fullAuto := fs.Bool("full-auto", false, "post suggested comments to GitHub")
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	firstTag := fs.String("tags", "", "tag names, separated by spaces or commas; put this flag last")
 	fs.Usage = func() {
@@ -148,10 +139,9 @@ Prints ---, the PR or tagged commit link, Next action, and Warnings on stdout.
 Argument, setup, and posting errors go to stderr.
 Shows eligible failures and verified missing PR builds in the earliest unfinished
 milestone. Re-run this command after those builds pass to get the next milestone.
-By default, retest commands are printed for manual posting. Use --full-auto
-before --prs or --tags to post each command as a separate GitHub comment and
-print the posted comment links. The GitHub login must be able to comment.
-Add --start-missing to --full-auto to also post commands under Start missing builds.
+By default, commands are printed for manual posting. Use --full-auto before
+--prs or --tags to post the same commands as separate GitHub comments and print
+their links. The configured GitHub login must be able to comment.
 Choose either --prs or --tags, and put other flags before the list.
 Duplicate PR numbers or tag names are processed once.
 
@@ -201,9 +191,6 @@ FACT (stackrox/fact) uses one milestone: fact-on-push.
 	if hasPRs == hasTags {
 		return options{}, errors.New("exactly one of --prs or --tags is required; use --help for usage")
 	}
-	if *startMissing && (!*fullAuto || !hasPRs) {
-		return options{}, errors.New("--start-missing requires --full-auto and --prs")
-	}
 	repository := *repo
 	if !strings.Contains(repository, "/") {
 		repository = "stackrox/" + repository
@@ -211,7 +198,7 @@ FACT (stackrox/fact) uses one milestone: fact-on-push.
 	if !refs.ValidRepository(repository) {
 		return options{}, errors.New("--repo must be a repository name or OWNER/REPO")
 	}
-	opts := options{repo: repository, verifyPull: *verifyPull, fullAuto: *fullAuto, startMissing: *startMissing}
+	opts := options{repo: repository, verifyPull: *verifyPull, fullAuto: *fullAuto}
 	if hasTags {
 		seen := make(map[string]bool)
 		for _, value := range append([]string{*firstTag}, fs.Args()...) {

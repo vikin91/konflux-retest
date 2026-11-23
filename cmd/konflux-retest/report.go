@@ -8,8 +8,8 @@ import (
 )
 
 type commentReport struct {
-	retries, starts             []string
-	postedRetries, postedStarts bool
+	retries, starts []string
+	posted          bool
 }
 
 func retryComments(result konfluxretest.Result) []string {
@@ -43,10 +43,10 @@ func printResult(out io.Writer, result konfluxretest.Result, comments commentRep
 		fmt.Fprintf(out, "\nNext action: %s\n", result.Action)
 	}
 	if len(result.Jobs) > 0 {
-		if !comments.postedRetries && result.Tag != "" {
+		if !comments.posted && result.Tag != "" {
 			fmt.Fprintln(out, "Post each command below as a separate GitHub comment.")
 		}
-		printCommentLines(out, comments.retries, comments.postedRetries)
+		printCommentLines(out, comments.retries, comments.posted)
 	} else if !startOnly {
 		fmt.Fprintln(out, result.Message)
 	}
@@ -54,7 +54,7 @@ func printResult(out io.Writer, result konfluxretest.Result, comments commentRep
 		if !startOnly {
 			fmt.Fprintln(out, "\nStart missing builds:")
 		}
-		printCommentLines(out, comments.starts, comments.postedStarts)
+		printCommentLines(out, comments.starts, comments.posted)
 	}
 	fmt.Fprintln(out, "\nWarnings:")
 	if len(result.Warnings) == 0 {
