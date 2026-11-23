@@ -44,7 +44,7 @@ func TestPrintResult(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			var out strings.Builder
-			printResult(&out, tt.result)
+			printResult(&out, tt.result, retryComments(tt.result), true)
 			if out.String() != tt.want {
 				t.Fatalf("got %q; want %q", out.String(), tt.want)
 			}

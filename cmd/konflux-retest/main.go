@@ -1,4 +1,4 @@
-// Command konflux-retest prints dependency-ordered Konflux retry comments for GitHub PRs and tags.
+// Command konflux-retest prepares dependency-ordered Konflux retry comments for GitHub PRs and tags.
 package main
 
 import (
@@ -16,6 +16,7 @@ import (
 	"time"
 
 	konfluxretest "github.com/vikin91/konflux-retest"
+	"github.com/vikin91/konflux-retest/cmd/konflux-retest/internal/commentwriter"
 	"github.com/vikin91/konflux-retest/internal/refs"
 )
 
@@ -24,6 +25,7 @@ type options struct {
 	prs        []int
 	tags       []string
 	verifyPull bool
+	fullAuto   bool
 }
 
 const assessmentTimeout = 2 * time.Minute
@@ -61,7 +63,34 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 	if opts.verifyPull {
 		config.PullImage = dockerPull
 	}
+	var writer *commentwriter.Client
+	if opts.fullAuto {
+		writer = commentwriter.New(config.HTTPClient, token)
+	}
 	code := 0
+	report := func(result konfluxretest.Result, checkErr error, pr int) {
+		if checkErr != nil {
+			code = 1
+		}
+		comments := retryComments(result)
+		if writer == nil || len(comments) == 0 {
+			printResult(out, result, comments, true)
+			return
+		}
+
+		var links []string
+		var err error
+		if result.Tag == "" {
+			links, err = writer.PostPR(ctx, opts.repo, pr, result.SHA, comments)
+		} else {
+			links, err = writer.PostTag(ctx, opts.repo, result.Tag, result.SHA, comments)
+		}
+		printResult(out, result, links, false)
+		if err != nil {
+			fmt.Fprintf(diagnostics, "error: %s: %d of %d comment links confirmed: %v\n", result.URL, len(links), len(comments), err)
+			code = 1
+		}
+	}
 	for i, pr := range opts.prs {
 		if i > 0 {
 			fmt.Fprintln(out)
@@ -69,10 +98,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 		checkCtx, cancel := context.WithTimeout(ctx, assessmentTimeout)
 		result, err := konfluxretest.CheckPR(checkCtx, config, opts.repo, pr)
 		cancel()
-		printResult(out, result)
-		if err != nil {
-			code = 1
-		}
+		report(result, err, pr)
 		if ctx.Err() != nil {
 			break
 		}
@@ -84,10 +110,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 		checkCtx, cancel := context.WithTimeout(ctx, assessmentTimeout)
 		result, err := konfluxretest.CheckTag(checkCtx, config, opts.repo, tag)
 		cancel()
-		printResult(out, result)
-		if err != nil {
-			code = 1
-		}
+		report(result, err, 0)
 		if ctx.Err() != nil {
 			break
 		}
@@ -100,6 +123,7 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "stackrox", "repository name under stackrox, or OWNER/REPO")
 	verifyPull := fs.Bool("verify-pull", false, "optionally verify input existence with local docker pull")
+	fullAuto := fs.Bool("full-auto", false, "post eligible retest comments to GitHub")
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	firstTag := fs.String("tags", "", "tag names, separated by spaces or commas; put this flag last")
 	fs.Usage = func() {
@@ -108,9 +132,12 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
        konflux-retest --repo stackrox/scanner --tags 2.39.27
 
 Prints ---, the PR or tagged commit link, Next action, and Warnings on stdout.
-Argument and setup errors go to stderr.
+Argument, setup, and posting errors go to stderr.
 Only failed jobs in the earliest unfinished milestone are suggested. Re-run this
-command after those builds pass to get the next milestone. Nothing is posted.
+command after those builds pass to get the next milestone.
+By default, retest commands are printed for manual posting. Use --full-auto
+before --prs or --tags to post each command as a separate GitHub comment and
+print the posted comment links. The GitHub login must be able to comment.
 Choose either --prs or --tags, and put other flags before the list.
 Duplicate PR numbers or tag names are processed once.
 
@@ -167,7 +194,7 @@ FACT (stackrox/fact) uses one milestone: fact-on-push.
 	if !refs.ValidRepository(repository) {
 		return options{}, errors.New("--repo must be a repository name or OWNER/REPO")
 	}
-	opts := options{repo: repository, verifyPull: *verifyPull}
+	opts := options{repo: repository, verifyPull: *verifyPull, fullAuto: *fullAuto}
 	if hasTags {
 		seen := make(map[string]bool)
 		for _, value := range append([]string{*firstTag}, fs.Args()...) {

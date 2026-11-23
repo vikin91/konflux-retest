@@ -20,6 +20,8 @@ func TestParseOptions(t *testing.T) {
 		"should deduplicate tags in input order":           {args: []string{"--repo", "scanner", "--tags", "2.39.27,2.39.28", "2.39.27", "v2.40.0"}, want: options{repo: "stackrox/scanner", tags: []string{"2.39.27", "2.39.28", "v2.40.0"}}},
 		"should accept quoted tag lists and namespaces":    {args: []string{"--tags", "release/v1 v2"}, want: options{repo: "stackrox/stackrox", tags: []string{"release/v1", "v2"}}},
 		"should allow optional verification with tags":     {args: []string{"--verify-pull", "--tags", "v1"}, want: options{repo: "stackrox/stackrox", tags: []string{"v1"}, verifyPull: true}},
+		"should enable posting for PRs":                    {args: []string{"--full-auto", "--prs", "1"}, want: options{repo: "stackrox/stackrox", prs: []int{1}, fullAuto: true}},
+		"should enable posting for tags":                   {args: []string{"--full-auto", "--tags", "v1"}, want: options{repo: "stackrox/stackrox", tags: []string{"v1"}, fullAuto: true}},
 		"should reject mixed PR and tag lists":             {args: []string{"--prs", "1", "--tags", "v1"}, invalid: true},
 		"should reject mixed lists even when one is empty": {args: []string{"--prs=", "--tags", "v1"}, invalid: true},
 		"should reject empty tags":                         {args: []string{"--tags="}, invalid: true},
@@ -65,7 +67,7 @@ func TestHelpExplainsAuthenticationAndMilestones(t *testing.T) {
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("got %v", err)
 	}
-	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push", "--tags", "scanner-db-slim-on-push"} {
+	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push", "--tags", "--full-auto", "scanner-db-slim-on-push"} {
 		if !strings.Contains(out.String(), text) {
 			t.Errorf("help missing %q", text)
 		}

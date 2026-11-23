@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
-	"github.com/vikin91/konflux-retest"
+	konfluxretest "github.com/vikin91/konflux-retest"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -138,6 +141,124 @@ func TestRunFactTag(t *testing.T) {
 			want := "---\nhttps://github.com/stackrox/fact/commit/" + sha + "\nTag: 0.3.12\n\n" + tt.want
 			if code != 0 || diagnostics.Len() != 0 || out.String() != want {
 				t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
+			}
+		})
+	}
+}
+
+func TestRunCommentPosting(t *testing.T) {
+	t.Setenv("GH_TOKEN", "test-token")
+	const (
+		repoPath  = "/repos/stackrox/scanner"
+		sha       = "6938eeab2b7ba5235bc4c710d56e742aab6ac52f"
+		otherSHA  = "7826bed24314e774deb43ae5db1e7b30b1eda796"
+		tag       = "release/v1"
+		prLink    = "https://github.com/stackrox/scanner/pull/42#issuecomment-"
+		tagLink   = "https://github.com/stackrox/scanner/commit/" + sha + "#commitcomment-"
+		prCommand = "/konflux-retest scanner-on-push"
+		tagOne    = "/retest scanner-on-push tag:" + tag
+		tagTwo    = "/retest scanner-slim-on-push tag:" + tag
+	)
+	tests := map[string]struct {
+		tag, auto, stale, closed, noRetries, timeout bool
+		wantPosts                                    []string
+		wantReads                                    int
+		wantOut, wantError                           string
+	}{
+		"should print PR commands by default":       {wantReads: 1, wantOut: "\n" + prCommand + "\n"},
+		"should print tag commands by default":      {tag: true, wantReads: 1, wantOut: "\n" + tagOne + "\n" + tagTwo + "\n"},
+		"should post separate PR comments":          {auto: true, wantReads: 2, wantPosts: []string{prCommand, "/konflux-retest scanner-slim-on-push"}, wantOut: "Posted " + prLink + "1\nPosted " + prLink + "2\n"},
+		"should post separate tag comments":         {tag: true, auto: true, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\nPosted " + tagLink + "2\n"},
+		"should withhold comments on a changed PR":  {auto: true, stale: true, wantReads: 2, wantError: "PR closed or its head changed"},
+		"should withhold comments on a closed PR":   {auto: true, closed: true, wantReads: 2, wantError: "PR closed or its head changed"},
+		"should withhold comments on a moved tag":   {tag: true, auto: true, stale: true, wantReads: 2, wantError: "tag points to a different commit"},
+		"should skip posting with no eligible jobs": {auto: true, noRetries: true, wantReads: 1, wantOut: "Next action: Wait"},
+		"should report a timeout without retrying":  {tag: true, auto: true, timeout: true, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\n", wantError: `1 of 2 comment links confirmed: "` + tagTwo + `": GitHub request failed and the comment may have been posted`},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			args := []string{"--repo", "scanner"}
+			if tt.auto {
+				args = append(args, "--full-auto")
+			}
+			refPath, postPath := repoPath+"/pulls/42", repoPath+"/issues/42/comments"
+			event, branch := "pull_request", "master"
+			if tt.tag {
+				args = append(args, "--tags", tag)
+				refPath, postPath = repoPath+"/commits/refs%2Ftags%2Frelease%2Fv1", repoPath+"/commits/"+sha+"/comments"
+				event, branch = "push", "refs/tags/"+tag
+			} else {
+				args = append(args, "--prs", "42")
+			}
+
+			var posts []string
+			reads := 0
+			httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				path := r.URL.EscapedPath()
+				if r.URL.Host == "api.github.com" && r.Header.Get("Authorization") != "Bearer test-token" {
+					t.Fatalf("missing GitHub token for %s %s", r.Method, path)
+				}
+				status, body := http.StatusOK, ""
+				switch {
+				case r.Method == http.MethodPost && path == postPath:
+					if r.URL.Host != "api.github.com" || r.Header.Get("Content-Type") != "application/json" || reads != 2 || len(posts) >= len(tt.wantPosts) {
+						t.Fatalf("unexpected POST %s after %d reads and %d posts", r.URL, reads, len(posts))
+					}
+					defer r.Body.Close()
+					var fields map[string]string
+					if err := json.NewDecoder(r.Body).Decode(&fields); err != nil || len(fields) != 1 {
+						t.Fatalf("invalid comment payload %v: %v", fields, err)
+					}
+					posts = append(posts, fields["body"])
+					if tt.timeout && len(posts) == 2 {
+						return nil, context.DeadlineExceeded
+					}
+					status, body = http.StatusCreated, fmt.Sprintf(`{"id":%d}`, len(posts))
+				case r.Method == http.MethodGet && path == refPath:
+					reads++
+					currentSHA, state := sha, "open"
+					if reads == 2 && tt.stale {
+						currentSHA = otherSHA
+					}
+					if reads == 2 && tt.closed {
+						state = "closed"
+					}
+					if tt.tag {
+						body = fmt.Sprintf(`{"sha":%q}`, currentSHA)
+					} else {
+						body = fmt.Sprintf(`{"state":%q,"head":{"sha":%q}}`, state, currentSHA)
+					}
+				case r.Method == http.MethodGet && path == repoPath+"/commits/"+sha+"/check-runs":
+					body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / scanner-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/one","status":"completed","conclusion":"failure"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / scanner-slim-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/two","status":"completed","conclusion":"failure"}]}`
+					if tt.noRetries {
+						body = `{"check_runs":[]}`
+					}
+				case r.Method == http.MethodGet && strings.HasPrefix(path, "/apis/tekton.dev/v1/namespaces/builds/pipelineruns/"):
+					name := strings.TrimPrefix(path, "/apis/tekton.dev/v1/namespaces/builds/pipelineruns/")
+					id := "1"
+					if name == "two" {
+						id = "2"
+					}
+					body = fmt.Sprintf(`{"metadata":{"name":%q,"namespace":"builds","annotations":{"pipelinesascode.tekton.dev/check-run-id":%q,"pipelinesascode.tekton.dev/sha":%q,"pipelinesascode.tekton.dev/repo-url":"https://github.com/stackrox/scanner","pipelinesascode.tekton.dev/event-type":%q,"pipelinesascode.tekton.dev/branch":%q,"pipelinesascode.tekton.dev/pull-request":"42"}}}`, name, id, sha, event, branch)
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL)
+				}
+				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			var out, diagnostics strings.Builder
+			code := run(t.Context(), args, &out, &diagnostics, konfluxretest.Config{HTTPClient: httpClient, KonfluxToken: fixtureKonfluxToken})
+			if !slices.Equal(posts, tt.wantPosts) || reads != tt.wantReads || !strings.Contains(out.String(), tt.wantOut) {
+				t.Fatalf("reads=%d posts=%q stdout=%q stderr=%q", reads, posts, out.String(), diagnostics.String())
+			}
+			if tt.wantError == "" {
+				if code != 0 || diagnostics.Len() != 0 {
+					t.Fatalf("code=%d stderr=%q", code, diagnostics.String())
+				}
+			} else if code != 1 || !strings.Contains(diagnostics.String(), tt.wantError) {
+				t.Fatalf("code=%d stderr=%q; want %q", code, diagnostics.String(), tt.wantError)
+			}
+			if tt.auto && (strings.Contains(out.String(), "Post each command") || strings.Contains(out.String(), "\n/retest ") || strings.Contains(out.String(), "\n/konflux-retest ")) {
+				t.Fatalf("unexpected manual instructions in posting mode: %s", out.String())
 			}
 		})
 	}

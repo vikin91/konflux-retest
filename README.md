@@ -1,6 +1,6 @@
 # konflux-retest
 
-Work out which failed StackRox, Scanner, Collector, or FACT Konflux jobs to restart next, and print retest comments you can copy and post yourself.
+Work out which failed StackRox, Scanner, Collector, or FACT Konflux jobs to restart next. The CLI prints retest comments by default and can post them with `--full-auto`.
 
 ## What problem does this solve?
 
@@ -14,9 +14,9 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-**No. Running this tool does not post anything to GitHub in your name.** It does not create comments, restart jobs, or change PRs. The `/konflux-retest` and `/retest` lines are printed text. A restart is requested only when you choose to post a suggested command as a GitHub comment yourself.
+By default, the CLI only prints the `/konflux-retest` and `/retest` commands. Add `--full-auto` to post one GitHub comment per eligible job using your configured GitHub login. The CLI prints the posted comment links alongside the usual report.
 
-The implementation uses only HTTP `GET` requests to read PR details, tag commits, check runs, pipeline definitions, version pins, Quay image metadata, and archived Konflux task logs. It reads saved logins with `gh auth token --hostname github.com` and `oc config view` / `oc whoami -t`. With `--verify-pull`, it also runs `docker pull`, which may download image layers locally. There is no GitHub write request or comment-posting command in the tool, even if your token has write permissions. These paths are in [github.go](github.go), [registry.go](registry.go), and [cmd/konflux-retest](cmd/konflux-retest); the HTTP test in [github_test.go](github_test.go) also checks that requests use `GET`.
+The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--full-auto`. Go projects that import the analyzer have access to the read-only API.
 
 ## Build
 
@@ -107,6 +107,15 @@ Check a tagged Scanner build:
 
 Multiple tags work the same way: `--tags 2.39.27,2.39.28` or `--tags 2.39.27 2.39.28`. Lightweight and annotated tags resolve through `refs/tags/`, so a branch with the same name cannot select a different commit. Each report includes the tag name and its commit link. A missing tag produces an error report; the tool continues with the remaining tags.
 
+Post eligible retest comments for a PR or tag:
+
+```sh
+./konflux-retest --repo stackrox --full-auto --prs 23956
+./konflux-retest --repo stackrox/scanner --full-auto --tags 2.39.27
+```
+
+The CLI checks the PR head or tag again before posting. If a comment fails, it reports the confirmed links, stops posting for that target, and exits with status 1 after processing the remaining targets. If a request may have succeeded, check GitHub before rerunning the command.
+
 Save the complete PR reports, including warnings, to a file:
 
 ```sh
@@ -180,6 +189,8 @@ gh auth login --hostname github.com
 The tool never prints or saves the token. An invalid environment token is reported as an API error; it does not silently switch accounts by falling back to the CLI login.
 
 A fine-grained token needs access to the requested repositories, **Pull requests: read**, **Checks: read**, and **Contents: read** (including access to the head repository for fork PRs). Only github.com is supported.
+
+Posting also requires a GitHub identity allowed to comment on the target. For PR comments, a fine-grained token needs **Issues: write** or **Pull requests: write**. See [GitHub's PR comment permissions](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment) and [commit comment permissions](https://docs.github.com/en/rest/commits/comments#create-a-commit-comment).
 
 References: [GitHub CLI token lookup](https://cli.github.com/manual/gh_auth_token), [GitHub CLI environment variables](https://cli.github.com/manual/gh_help_environment), [GitHub checks API](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference).
 
