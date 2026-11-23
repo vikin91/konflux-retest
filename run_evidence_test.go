@@ -20,11 +20,11 @@ func TestScopeChecksPreservesIndependentResults(t *testing.T) {
 		checks := buildCheck("checks", "completed", "failure")
 		checks.ID++
 		c := githubClient{identity: func(ctx context.Context, check checkRun, _, _, _ string, _ int) (runObservation, error) {
-			switch check {
-			case fact:
+			switch {
+			case check.Name == fact.Name:
 				<-ctx.Done()
 				return runObservation{}, ctx.Err()
-			case checks:
+			case check.ID == checks.ID:
 				time.Sleep(time.Second)
 				return runObservation{matches: true}, nil
 			default:

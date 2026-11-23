@@ -41,11 +41,11 @@ var (
 )
 
 type retryPlan struct {
-	jobs             []string
-	messages         []string
-	waits            []string
-	noRetryAction    string
-	hasVerifiedBuild bool
+	jobs           []string
+	messages       []string
+	waits          []string
+	noRetryAction  string
+	hasScopedBuild bool
 }
 
 func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
@@ -85,13 +85,17 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		check := latest[fullName]
 		name, prefixed := strings.CutPrefix(fullName, checkPrefix)
 		if failure := check.startFailure; failure != nil {
-			plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) reported a PipelineRun creation failure on this commit. PR or tag unknown. %s", fullName, failure.CheckID, failure.Reason))
-			plan.noRetryAction = "Wait: PipelineRun creation failed for a check with unknown PR or tag."
+			if check.isPRStartFailure() {
+				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) could not start a PipelineRun for PR #%d because creation was temporarily disabled.", fullName, failure.CheckID, failure.PRNumber))
+			} else {
+				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) reported a PipelineRun creation failure on this commit. PR or tag unknown. %s", fullName, failure.CheckID, failure.Reason))
+				plan.noRetryAction = "Wait: PipelineRun creation failed for a check with unknown PR or tag."
+			}
 		}
 		switch {
 		case prefixed && knownJob(name, stages):
 			jobs[name] = check
-			plan.hasVerifiedBuild = plan.hasVerifiedBuild || check.identityKnown
+			plan.hasScopedBuild = plan.hasScopedBuild || check.identityKnown || check.isPRStartFailure()
 		case prefixed && policyCheck.MatchString(name):
 			if check.Status == "completed" && check.Conclusion != "success" && check.Conclusion != "skipped" {
 				plan.messages = append(plan.messages, fmt.Sprintf("policy check %q is %s; inspect its findings or upstream build failure; no policy retry emitted.", name, check.Conclusion))
@@ -176,7 +180,8 @@ func passed(check checkRun) bool {
 }
 
 func retryable(check checkRun) bool {
-	return check.startFailure == nil && check.Status == "completed" && slices.Contains([]string{"failure", "timed_out", "cancelled", "stale", "startup_failure"}, check.Conclusion)
+	return check.isPRStartFailure() || check.startFailure == nil && check.Status == "completed" &&
+		slices.Contains([]string{"failure", "timed_out", "cancelled", "stale", "startup_failure"}, check.Conclusion)
 }
 
 func checkState(check checkRun) string {

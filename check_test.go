@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -13,24 +14,126 @@ import (
 	"testing"
 )
 
+func TestCheckPRRetriesTemporaryAdmissionDenial(t *testing.T) {
+	const (
+		head        = "c7b9d50a891118421d64c6e5e41e15ae50265305"
+		branch      = "alkmim/rox-37740-release-4.11-v1.6.2-bundle-v4"
+		association = `{"id":5147254021,"number":23854,"head":{"sha":"` + head + `","ref":"` + branch + `"}}`
+		denial      = "ValidatingAdmissionPolicy 'deny-pipelinerun-create' with binding 'deny-pipelinerun-create' denied request: PipelineRun creation is temporarily disabled"
+	)
+	for name, tt := range map[string]struct {
+		associations, denial, newerStatus, newerConclusion string
+		wantJobs                                           []string
+	}{
+		"should retry checks and the first milestone": {
+			associations: association, denial: denial, wantJobs: []string{"checks", "main-on-push"},
+		},
+		"should withhold when GitHub lists no PR": {denial: denial},
+		"should withhold when GitHub lists a different PR": {
+			associations: strings.Replace(association, "5147254021", "5147254022", 1), denial: denial,
+		},
+		"should withhold when GitHub lists a stale head": {
+			associations: strings.Replace(association, head, "old-head", 1), denial: denial,
+		},
+		"should withhold when GitHub lists multiple PRs": {associations: association + `,{"number":23855}`, denial: denial},
+		"should withhold a different admission denial": {
+			associations: association, denial: "ValidatingAdmissionPolicy 'require-labels' denied request: missing labels",
+		},
+		"should withhold once a newer build is queued": {
+			associations: association, denial: denial, newerStatus: "queued", wantJobs: []string{"checks"},
+		},
+		"should withhold once a newer build is running": {
+			associations: association, denial: denial, newerStatus: "in_progress", wantJobs: []string{"checks"},
+		},
+		"should withhold once a newer build succeeds": {
+			associations: association, denial: denial, newerStatus: "completed", newerConclusion: "success", wantJobs: []string{"checks"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			check := func(id int64, job string) string {
+				return fmt.Sprintf(`{"id":%d,"app":{"id":296509},"name":"Red Hat Konflux / %s",
+					"head_sha":"%s","status":"completed","conclusion":"failure","pull_requests":[%s],
+					"output":{"title":"pipelinerun start failure","text":%q}}`, id, job, head, tt.associations, tt.denial)
+			}
+			const mainCheckID = 135671709681
+			checks := []string{check(135671710608, "checks"), check(mainCheckID, "main-on-push"), check(135671708354, "operator-bundle-on-push")}
+			if tt.newerStatus != "" {
+				checks = append(checks, fmt.Sprintf(`{"id":%d,"app":{"id":296509},"name":"Red Hat Konflux / main-on-push","status":%q,"conclusion":%q}`,
+					mainCheckID+10, tt.newerStatus, tt.newerConclusion))
+			}
+			config := Config{
+				VerifyRunIdentity: true,
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					var body string
+					switch r.URL.Path {
+					case "/repos/stackrox/stackrox/pulls/23854":
+						body = `{"id":5147254021,"state":"open","head":{"sha":"` + head + `","ref":"` + branch + `"}}`
+					case "/repos/stackrox/stackrox/commits/" + head + "/check-runs":
+						body = `{"check_runs":[` + strings.Join(checks, ",") + `]}`
+					default:
+						t.Fatalf("unexpected request: %s", r.URL)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+				})},
+			}
+			client, checker := config.clients()
+			client.identity = func(_ context.Context, c checkRun, _, _ string, _ string, _ int) (runObservation, error) {
+				if c.ID != mainCheckID+10 || tt.newerStatus == "" {
+					t.Errorf("unexpected PipelineRun lookup for check %d", c.ID)
+				}
+				return runObservation{matches: true}, nil
+			}
+			result, err := checkPR(t.Context(), client, checker, "stackrox/stackrox", 23854)
+			wantAction := ActionWait
+			if len(tt.wantJobs) > 0 {
+				wantAction = ActionRetest
+			}
+			if err != nil || result.Action != wantAction || !slices.Equal(result.Jobs, tt.wantJobs) {
+				t.Fatalf("result=%+v error=%v, want action=%v jobs=%v", result, err, wantAction, tt.wantJobs)
+			}
+			for _, job := range result.Jobs {
+				if !slices.ContainsFunc(result.Runs, func(run Run) bool {
+					return run.Job == job && run.Eligible && !run.IdentityKnown && run.ImageURL == "" &&
+						slices.ContainsFunc(result.StartFailures, func(failure StartFailure) bool {
+							return failure.CheckID == run.ID && failure.PRNumber == 23854
+						})
+				}) {
+					t.Fatalf("expected GitHub check evidence for job %s: %+v", job, result)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckPRUsesOptionalIntegrations(t *testing.T) {
 	for name, tt := range map[string]struct {
-		pullReason string
-		wantLogs   bool
-		action     Action
-		jobs       []string
+		pullReason  string
+		wantLogs    bool
+		failedStart bool
+		action      Action
+		jobs        []string
 	}{
 		"should investigate a missing image after fallback fails":          {pullReason: "image is missing (docker pull)", wantLogs: true, action: ActionInvestigateMissingImages},
 		"should suggest a retest after a successful pull without fallback": {action: ActionRetest, jobs: []string{"retag-scanner"}},
+		"should suggest a failed start when the image is available":        {failedStart: true, action: ActionRetest, jobs: []string{"retag-scanner"}},
+		"should withhold a failed start when the image is missing":         {failedStart: true, pullReason: "image is missing (docker pull)", action: ActionInvestigateMissingImages},
 	} {
 		t.Run(name, func(t *testing.T) {
 
 			files := requirementFiles(t)
 			checks := successfulChecks()
+			pr := pullRequest{ID: 42, Number: 1, State: "open"}
+			pr.Head.SHA, pr.Head.Ref = "head", "topic"
 			for i := range checks {
 				if checks[i].Name == checkPrefix+"retag-scanner" {
 					checks[i].Conclusion = "failure"
 					checks[i].DetailsURL = "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/run"
+					if tt.failedStart {
+						checks[i].HeadSHA = pr.Head.SHA
+						checks[i].PullRequests = []pullRequest{pr}
+						checks[i].Output.Title = "pipelinerun start failure"
+						checks[i].Output.Text = "ValidatingAdmissionPolicy 'deny-pipelinerun-create' denied request: PipelineRun creation is temporarily disabled"
+					}
 				}
 			}
 			var tokenCalled, pullCalled bool
@@ -56,7 +159,7 @@ func TestCheckPRUsesOptionalIntegrations(t *testing.T) {
 					case r.URL.Host == "quay.io":
 						status = http.StatusForbidden
 					case r.URL.Path == "/repos/stackrox/stackrox/pulls/1":
-						body = []byte(`{"state":"open","head":{"sha":"head"}}`)
+						body, _ = json.Marshal(pr)
 					case r.URL.Path == "/repos/stackrox/stackrox/commits/head/check-runs":
 						body, _ = json.Marshal(map[string]any{"check_runs": checks})
 					case strings.HasPrefix(r.URL.Path, "/repos/stackrox/stackrox/contents/"):

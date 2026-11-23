@@ -285,6 +285,12 @@ PipelineRun annotations. Supply `KonfluxToken` for the cluster API or Tekton
 Results archive. Without verification, the library plans from commit-level
 check evidence.
 
+For an open PR, a check from the Red Hat Konflux app can also authorize a retry
+when it reports the temporary `deny-pipelinerun-create` admission policy and
+GitHub associates the check with exactly that PR and its current head.
+`StartFailure.PRNumber` records the association. These retries follow the same
+dependency order and image readiness rules.
+
 Identity checks request all runs and examine job histories in parallel.
 Each lookup has up to 10 seconds, with up to 5 seconds for the live API
 and time reserved for the archive. The identity stage has up to 30 seconds

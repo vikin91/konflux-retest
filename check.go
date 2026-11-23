@@ -19,8 +19,8 @@ type (
 	// Config supplies credentials and optional integrations for checking builds.
 	// Its zero value uses anonymous HTTP requests without local commands or log access.
 	Config struct {
-		// VerifyRunIdentity requires PipelineRun evidence matching the PR or full tag ref.
-		// Without readable evidence, affected jobs remain unknown and ineligible.
+		// VerifyRunIdentity requires evidence matching the PR or full tag ref for retries.
+		// Only a scoped GitHub creation failure can authorize a retry without a PipelineRun.
 		// Leave this enabled when using Jobs to automate retries.
 		VerifyRunIdentity bool
 		GitHubToken       string
@@ -65,6 +65,8 @@ type (
 		// including checks whose PR or tag association cannot be verified.
 		StartFailures []StartFailure
 		prNumber      int
+		prID          int64
+		prHeadRef     string
 	}
 
 	// Run is stable check evidence. Eligible is assigned only by the retry planner.
@@ -72,7 +74,9 @@ type (
 		Job                     string
 		ID                      int64
 		Status, Conclusion, URL string
-		IdentityKnown, Eligible bool
+		// IdentityKnown indicates that PipelineRun evidence matches the requested PR or tag.
+		IdentityKnown bool
+		Eligible      bool
 		// ImageURL and ImageDigest contain a validated image reference and SHA-256 digest from a verified run.
 		ImageURL, ImageDigest string
 	}
@@ -169,6 +173,8 @@ func checkPR(ctx context.Context, c githubClient, checker inputChecker, repo str
 	}
 	result.SHA = pr.Head.SHA
 	result.prNumber = number
+	result.prID = pr.ID
+	result.prHeadRef = pr.Head.Ref
 	headRepo := pr.Head.Repo.FullName
 	if headRepo == "" {
 		headRepo = repo
@@ -209,6 +215,9 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		check := &checks[i]
 		if failure := pipelineRunStartFailure(*check); failure != nil {
 			check.startFailure = failure
+			if check.matchesPRAdmissionDenial(result) {
+				failure.PRNumber = result.prNumber
+			}
 			result.StartFailures = append(result.StartFailures, *failure)
 		}
 	}
@@ -247,7 +256,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	if len(unavailable) > 0 {
 		plan = planRetries(repo, checks, unavailable)
 	}
-	if c.verifyIdentity && !plan.hasVerifiedBuild {
+	if c.verifyIdentity && !plan.hasScopedBuild {
 		plan.noRetryAction = "Wait: " + noVerifiedBuild
 	}
 	result = resultFromPlan(result, plan, append(identityWarnings, warnings...))
@@ -265,7 +274,11 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	for _, name := range names {
 		check := latest[name]
 		job, prefixed := strings.CutPrefix(name, checkPrefix)
-		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: reportURL(check.DetailsURL), IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: prefixed && slices.Contains(result.Jobs, job)})
+		checkURL := reportURL(check.DetailsURL)
+		if check.isPRStartFailure() {
+			checkURL = fmt.Sprintf("%s/checks?check_run_id=%d", result.URL, check.ID)
+		}
+		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: checkURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: prefixed && slices.Contains(result.Jobs, job)})
 	}
 	return result, errors.Join(identityErr, inputErr)
 }

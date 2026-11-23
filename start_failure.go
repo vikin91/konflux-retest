@@ -15,6 +15,8 @@ type (
 	StartFailure struct {
 		CheckID int64
 		Job     string
+		// PRNumber identifies the exact PR associated with a temporary admission denial.
+		PRNumber int
 		// ExternalID is supplied by the GitHub App and can identify a job without identifying the triggering ref.
 		ExternalID string
 		// CheckStartedAt is GitHub's check timestamp.
@@ -55,6 +57,28 @@ func pipelineRunStartFailure(check checkRun) *StartFailure {
 		Cluster: checkCluster(check.DetailsURL), Category: category,
 		Reason: reason,
 	}
+}
+
+func (check checkRun) matchesPRAdmissionDenial(result Result) bool {
+	if check.startFailure == nil || check.startFailure.Category != StartFailureAdmissionPolicy || check.ID <= 0 ||
+		result.prID <= 0 || result.prHeadRef == "" || check.HeadSHA != result.SHA || len(check.PullRequests) != 1 {
+		return false
+	}
+	pr := check.PullRequests[0]
+	if pr.ID != result.prID || pr.Number != result.prNumber || pr.Head.SHA != result.SHA || pr.Head.Ref != result.prHeadRef {
+		return false
+	}
+	for _, output := range []string{check.Output.Text, check.Output.Summary} {
+		if strings.Contains(output, "ValidatingAdmissionPolicy 'deny-pipelinerun-create'") &&
+			strings.Contains(output, "PipelineRun creation is temporarily disabled") {
+			return true
+		}
+	}
+	return false
+}
+
+func (check checkRun) isPRStartFailure() bool {
+	return check.startFailure != nil && check.startFailure.CheckID == check.ID && check.startFailure.PRNumber > 0
 }
 
 func checkCluster(address string) string {

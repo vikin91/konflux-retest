@@ -26,9 +26,12 @@ type (
 		http           *http.Client
 	}
 	pullRequest struct {
-		State string `json:"state"`
-		Head  struct {
+		ID     int64  `json:"id"`
+		Number int    `json:"number"`
+		State  string `json:"state"`
+		Head   struct {
 			SHA  string `json:"sha"`
+			Ref  string `json:"ref"`
 			Repo struct {
 				FullName string `json:"full_name"`
 			} `json:"repo"`
@@ -38,6 +41,7 @@ type (
 		identityKnown         bool
 		imageURL, imageDigest string
 		ID                    int64     `json:"id"`
+		HeadSHA               string    `json:"head_sha"`
 		DetailsURL            string    `json:"details_url"`
 		ExternalID            string    `json:"external_id"`
 		StartedAt             time.Time `json:"started_at"`
@@ -49,7 +53,8 @@ type (
 			Summary string `json:"summary"`
 			Text    string `json:"text"`
 		} `json:"output"`
-		App          checkApp `json:"app"`
+		App          checkApp      `json:"app"`
+		PullRequests []pullRequest `json:"pull_requests"`
 		startFailure *StartFailure
 	}
 )

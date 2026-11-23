@@ -123,8 +123,8 @@ Tokens are never printed or saved.
 A fine-grained token needs repository access, Pull requests: read, Checks: read,
 and Contents: read for tags, pipeline definitions, and version pins.
 Only github.com is supported. A matching saved oc login lets the tool verify
-which PR or tag triggered each run. Jobs without verified identity receive no
-retry comment.
+which PR or tag triggered each run. A temporary admission denial can also
+qualify for a retry when GitHub associates the check with that PR and head.
 Retag decisions use the latest Konflux wait-for-image log when conclusive,
 otherwise registry checks (anonymous, or QUAY_USERNAME and QUAY_PASSWORD).
 Use --verify-pull before --prs or --tags to check with local docker pull first.

@@ -80,6 +80,9 @@ func (c githubClient) scopeJob(ctx context.Context, checks []checkRun, repo stri
 	for _, check := range checks {
 		if check.startFailure != nil {
 			if scoped.run.startFailure == nil {
+				if check.isPRStartFailure() {
+					return scopedJob{run: check}
+				}
 				scoped.run = check
 			}
 			continue

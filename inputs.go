@@ -29,7 +29,7 @@ func (c inputChecker) check(ctx context.Context, check checkRun, requirement ima
 
 	var evidence logEvidence
 	var logErr error
-	if c.logs != nil {
+	if c.logs != nil && !check.isPRStartFailure() {
 		evidence, logErr = c.logs(ctx, check, requirement)
 	}
 	var registryErr error
