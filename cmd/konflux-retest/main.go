@@ -26,7 +26,7 @@ type options struct {
 	prs        []int
 	tags       []string
 	verifyPull bool
-	fullAuto   bool
+	post       bool
 }
 
 const assessmentTimeout = 2 * time.Minute
@@ -66,7 +66,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 		config.PullImage = dockerPull
 	}
 	var writer *commentwriter.Client
-	if opts.fullAuto {
+	if opts.post {
 		writer = commentwriter.New(config.HTTPClient, token)
 	}
 	code := 0
@@ -127,7 +127,7 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "stackrox", "repository name under stackrox, or OWNER/REPO")
 	verifyPull := fs.Bool("verify-pull", false, "optionally verify input existence with local docker pull")
-	fullAuto := fs.Bool("full-auto", false, "post suggested comments to GitHub")
+	post := fs.Bool("post", false, "post suggested comments to GitHub")
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	firstTag := fs.String("tags", "", "tag names, separated by spaces or commas; put this flag last")
 	fs.Usage = func() {
@@ -139,7 +139,7 @@ Prints ---, the PR or tagged commit link, Next action, and Warnings on stdout.
 Argument, setup, and posting errors go to stderr.
 Shows eligible failures and verified missing PR builds in the earliest unfinished
 milestone. Re-run this command after those builds pass to get the next milestone.
-By default, commands are printed for manual posting. Use --full-auto before
+By default, commands are printed for manual posting. Use --post before
 --prs or --tags to post them and print the comment links. PRs get one comment
 with one command per line. Tags get a separate comment for each command.
 The configured GitHub login must be able to comment.
@@ -199,7 +199,7 @@ FACT (stackrox/fact) uses one milestone: fact-on-push.
 	if !refs.ValidRepository(repository) {
 		return options{}, errors.New("--repo must be a repository name or OWNER/REPO")
 	}
-	opts := options{repo: repository, verifyPull: *verifyPull, fullAuto: *fullAuto}
+	opts := options{repo: repository, verifyPull: *verifyPull, post: *post}
 	if hasTags {
 		seen := make(map[string]bool)
 		for _, value := range append([]string{*firstTag}, fs.Args()...) {

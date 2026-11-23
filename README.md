@@ -1,6 +1,6 @@
 # konflux-retest
 
-Work out which failed StackRox, Scanner, Collector, or FACT Konflux jobs to restart next. The CLI prints retest comments by default and can post them with `--full-auto`.
+Work out which failed StackRox, Scanner, Collector, or FACT Konflux jobs to restart next. The CLI prints retest comments by default and can post them with `--post`.
 
 ## What problem does this solve?
 
@@ -14,9 +14,9 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--full-auto` to post those same commands using your configured GitHub login. The CLI posts one multiline comment per PR and one single-line commit comment per tag command. The report includes the posted comment links.
+By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--post` to post those same commands using your configured GitHub login. The CLI posts one multiline comment per PR and one single-line commit comment per tag command. The report includes the posted comment links.
 
-The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--full-auto`. Go projects that import the analyzer have access to the read-only API.
+The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--post`. Go projects that import the analyzer have access to the read-only API.
 
 ## Build
 
@@ -110,8 +110,8 @@ Multiple tags work the same way: `--tags 2.39.27,2.39.28` or `--tags 2.39.27 2.3
 Post eligible retest comments for a PR or tag:
 
 ```sh
-./konflux-retest --repo stackrox --full-auto --prs 23956
-./konflux-retest --repo stackrox/scanner --full-auto --tags 2.39.27
+./konflux-retest --repo stackrox --post --prs 23956
+./konflux-retest --repo stackrox/scanner --post --tags 2.39.27
 ```
 
 The CLI checks the PR head or tag again before posting. If a comment fails, it reports the confirmed links, stops posting for that target, and exits with status 1 after processing the remaining targets. If a request may have succeeded, check GitHub before rerunning the command.

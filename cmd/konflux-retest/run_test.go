@@ -164,7 +164,7 @@ func TestRunCommentPosting(t *testing.T) {
 		tagTwo    = "/retest scanner-slim-on-push tag:" + tag
 	)
 	tests := map[string]struct {
-		tag, auto, stale, closed, noRetries bool
+		tag, post, stale, closed, noRetries bool
 		showMissing                         bool
 		wantPosts                           []string
 		wantReads, timeoutAt                int
@@ -172,24 +172,24 @@ func TestRunCommentPosting(t *testing.T) {
 	}{
 		"should print PR commands by default":          {wantReads: 1, wantOut: "\n" + prCommand + "\n"},
 		"should print tag commands by default":         {tag: true, wantReads: 1, wantOut: "\n" + tagOne + "\n" + tagTwo + "\n"},
-		"should post one multiline PR comment":         {auto: true, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
-		"should post separate tag comments":            {tag: true, auto: true, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\nPosted " + tagLink + "2\n"},
-		"should withhold comments on a changed PR":     {auto: true, stale: true, wantReads: 2, wantError: "PR closed or its head changed"},
-		"should withhold comments on a closed PR":      {auto: true, closed: true, wantReads: 2, wantError: "PR closed or its head changed"},
-		"should withhold comments on a moved tag":      {tag: true, auto: true, stale: true, wantReads: 2, wantError: "tag points to a different commit"},
-		"should skip posting with no eligible jobs":    {auto: true, noRetries: true, wantReads: 1, wantOut: "Next action: Wait"},
-		"should report a tag timeout without retrying": {tag: true, auto: true, timeoutAt: 2, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\n", wantError: `1 of 2 comment links confirmed: "` + tagTwo + `": GitHub request failed and the comment may have been posted`},
-		"should report a PR batch timeout once":        {auto: true, timeoutAt: 1, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "No comments confirmed.", wantError: "0 of 1 comment links confirmed"},
+		"should post one multiline PR comment":         {post: true, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
+		"should post separate tag comments":            {tag: true, post: true, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\nPosted " + tagLink + "2\n"},
+		"should withhold comments on a changed PR":     {post: true, stale: true, wantReads: 2, wantError: "PR closed or its head changed"},
+		"should withhold comments on a closed PR":      {post: true, closed: true, wantReads: 2, wantError: "PR closed or its head changed"},
+		"should withhold comments on a moved tag":      {tag: true, post: true, stale: true, wantReads: 2, wantError: "tag points to a different commit"},
+		"should skip posting with no eligible jobs":    {post: true, noRetries: true, wantReads: 1, wantOut: "Next action: Wait"},
+		"should report a tag timeout without retrying": {tag: true, post: true, timeoutAt: 2, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\n", wantError: `1 of 2 comment links confirmed: "` + tagTwo + `": GitHub request failed and the comment may have been posted`},
+		"should report a PR batch timeout once":        {post: true, timeoutAt: 1, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "No comments confirmed.", wantError: "0 of 1 comment links confirmed"},
 		"should print commands for missing builds":     {showMissing: true, noRetries: true, wantReads: 1, wantOut: "Next action: Start missing builds\n" + prMissing + "\n"},
 		"should print retries and missing builds":      {showMissing: true, wantReads: 1, wantOut: "\n" + prCommand + "\n" + prSecond + "\n\nStart missing builds:\n" + prMissing + "\n"},
-		"should post missing builds with full-auto":    {auto: true, showMissing: true, noRetries: true, wantReads: 2, wantPosts: []string{prMissing}, wantOut: "Next action: Start missing builds\nPosted " + prLink + "1\n"},
-		"should batch retries and missing builds":      {auto: true, showMissing: true, wantReads: 2, wantPosts: []string{prBatch + "\n" + prMissing}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
+		"should post missing builds with --post":       {post: true, showMissing: true, noRetries: true, wantReads: 2, wantPosts: []string{prMissing}, wantOut: "Next action: Start missing builds\nPosted " + prLink + "1\n"},
+		"should batch retries and missing builds":      {post: true, showMissing: true, wantReads: 2, wantPosts: []string{prBatch + "\n" + prMissing}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			args := []string{"--repo", "scanner"}
-			if tt.auto {
-				args = append(args, "--full-auto")
+			if tt.post {
+				args = append(args, "--post")
 			}
 			refPath, postPath := repoPath+"/pulls/42", repoPath+"/issues/42/comments"
 			event, branch := "pull_request", "master"
@@ -277,7 +277,7 @@ func TestRunCommentPosting(t *testing.T) {
 			} else if code != 1 || !strings.Contains(diagnostics.String(), tt.wantError) {
 				t.Fatalf("code=%d stderr=%q; want %q", code, diagnostics.String(), tt.wantError)
 			}
-			if tt.auto && (strings.Contains(out.String(), "Post each command") || strings.Contains(out.String(), "\n/retest ") || strings.Contains(out.String(), "\n/konflux-retest ")) {
+			if tt.post && (strings.Contains(out.String(), "Post each command") || strings.Contains(out.String(), "\n/retest ") || strings.Contains(out.String(), "\n/konflux-retest ")) {
 				t.Fatalf("unexpected manual instructions in posting mode: %s", out.String())
 			}
 		})
