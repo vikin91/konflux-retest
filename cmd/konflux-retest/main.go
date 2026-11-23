@@ -84,7 +84,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 		var links []string
 		var err error
 		if result.Tag == "" {
-			comments = []string{strings.Join(comments, "\n")}
+			comments = prPostingComments(result)
 			links, err = writer.PostPR(ctx, opts.repo, pr, result.SHA, comments)
 		} else {
 			links, err = writer.PostTag(ctx, opts.repo, result.Tag, result.SHA, comments)
@@ -148,8 +148,9 @@ Argument, setup, and posting errors go to stderr.
 Shows eligible failures and verified missing PR builds in the earliest unfinished
 milestone. Re-run this command after those builds pass to get the next milestone.
 By default, commands are printed for manual posting. Use --post before
---prs or --tags to post them and print the comment links. PRs get one comment
-with one command per line. Tags get a separate comment for each command.
+--prs or --tags to post them and print the comment links. PR commands normally
+share one comment. Recovered GitHub check update failures and tag commands
+each get a separate comment.
 The configured GitHub login must be able to comment.
 Choose either --prs or --tags, and put other flags before the list.
 Duplicate PR numbers or tag names are processed once.

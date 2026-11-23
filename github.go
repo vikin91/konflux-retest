@@ -55,9 +55,10 @@ type (
 			Summary string `json:"summary"`
 			Text    string `json:"text"`
 		} `json:"output"`
-		App          checkApp      `json:"app"`
-		PullRequests []pullRequest `json:"pull_requests"`
-		startFailure *StartFailure
+		App                 checkApp      `json:"app"`
+		PullRequests        []pullRequest `json:"pull_requests"`
+		startFailure        *StartFailure
+		retryPRStartFailure bool
 	}
 )
 

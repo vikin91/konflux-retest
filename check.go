@@ -61,6 +61,8 @@ type (
 		// MissingPRJobs lists missing builds with a verified PR comment trigger and ready inputs.
 		// These builds still block downstream milestones until they pass.
 		MissingPRJobs []string
+		// StandalonePRJobs lists eligible PR retries verified against a single-command comment.
+		StandalonePRJobs []string
 		// Runs exposes the latest scoped job observations. A newer unscoped
 		// creation failure can withhold a retry while the verified run remains visible.
 		Runs []Run
@@ -213,16 +215,8 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		return failedResult(result, err)
 	}
 	hasGitHubChecks := len(checks) > 0
-	for i := range checks {
-		check := &checks[i]
-		if failure := pipelineRunStartFailure(*check); failure != nil {
-			check.startFailure = failure
-			if check.matchesPRAdmissionDenial(result) {
-				failure.PRNumber = result.prNumber
-			}
-			result.StartFailures = append(result.StartFailures, *failure)
-		}
-	}
+	var startWarnings []string
+	result.StartFailures, startWarnings = c.startFailures(ctx, checks, repo, sourceRepo, result)
 	// Policy findings remain visible as commit-scoped advisories when run identity is unavailable.
 	advisoryChecks := map[string]checkRun{}
 	for _, check := range checks {
@@ -251,7 +245,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	plan := planRetries(repo, checks, nil)
 	var candidates, triggerWarnings []string
 	if c.verifyMissingPRTriggers && result.prNumber > 0 && len(plan.missingJobs) > 0 {
-		candidates, triggerWarnings = c.missingPRTriggers(ctx, sourceRepo, result.SHA, plan.missingJobs)
+		candidates, triggerWarnings = c.verifyPRTriggers(ctx, sourceRepo, result.SHA, plan.missingJobs)
 	}
 	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, slices.Concat(plan.jobs, candidates))
 	if len(unavailable) > 0 {
@@ -270,13 +264,13 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		if !hasGitHubChecks {
 			result.Message = "GitHub returned no check runs for this commit."
 		}
-		result.Warnings = slices.Concat(triggerWarnings, warnings)
+		result.Warnings = slices.Concat(startWarnings, triggerWarnings, warnings)
 		return result, inputErr
 	}
 	if c.verifyIdentity && !plan.hasScopedBuild {
 		plan.noRetryAction = "Wait: " + noVerifiedBuild
 	}
-	result = resultFromPlan(result, plan, slices.Concat(identityWarnings, warnings, triggerWarnings))
+	result = resultFromPlan(result, plan, slices.Concat(identityWarnings, startWarnings, warnings, triggerWarnings))
 	latest := map[string]checkRun{}
 	for _, check := range checks {
 		if isKonflux(check) && check.ID > latest[check.Name].ID {
@@ -295,7 +289,11 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 		if check.isPRStartFailure() {
 			checkURL = fmt.Sprintf("%s/checks?check_run_id=%d", result.URL, check.ID)
 		}
-		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: checkURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: prefixed && slices.Contains(result.Jobs, job)})
+		eligible := prefixed && slices.Contains(result.Jobs, job)
+		if eligible && check.isPRStartFailure() && check.startFailure.Category == StartFailureGitHubCheckUpdate {
+			result.StandalonePRJobs = append(result.StandalonePRJobs, job)
+		}
+		result.Runs = append(result.Runs, Run{Job: job, ID: check.ID, Status: check.Status, Conclusion: check.Conclusion, URL: checkURL, IdentityKnown: check.identityKnown, ImageURL: check.imageURL, ImageDigest: check.imageDigest, Eligible: eligible})
 	}
 	return result, errors.Join(identityErr, inputErr)
 }

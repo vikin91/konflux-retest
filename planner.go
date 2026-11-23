@@ -49,16 +49,20 @@ type retryPlan struct {
 	hasScopedBuild bool
 }
 
-func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
-	stages := milestones
+func stagesForRepo(repo string) [][]string {
 	switch {
 	case strings.EqualFold(repo, "stackrox/scanner"):
-		stages = scannerMilestones
+		return scannerMilestones
 	case strings.EqualFold(repo, "stackrox/collector"):
-		stages = collectorMilestones
+		return collectorMilestones
 	case strings.EqualFold(repo, "stackrox/fact"):
-		stages = factMilestones
+		return factMilestones
 	}
+	return milestones
+}
+
+func planRetries(repo string, checks []checkRun, unavailable map[string]string) retryPlan {
+	stages := stagesForRepo(repo)
 	plan := retryPlan{noRetryAction: "No build retests needed."}
 	latest := make(map[string]checkRun)
 	for _, check := range checks {
@@ -81,11 +85,15 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		check := latest[fullName]
 		name, prefixed := strings.CutPrefix(fullName, checkPrefix)
 		if failure := check.startFailure; failure != nil {
-			if check.isPRStartFailure() {
-				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) could not start a PipelineRun for PR #%d because creation was temporarily disabled.", fullName, failure.CheckID, failure.PRNumber))
-			} else {
+			switch {
+			case failure.PRNumber == 0:
 				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) reported a PipelineRun creation failure on this commit. PR or tag unknown. %s", fullName, failure.CheckID, failure.Reason))
 				plan.noRetryAction = "Wait: PipelineRun creation failed for a check with unknown PR or tag."
+			case check.isPRStartFailure():
+				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) could not start a PipelineRun for PR #%d. %s", fullName, failure.CheckID, failure.PRNumber, failure.Reason))
+			default:
+				plan.messages = append(plan.messages, fmt.Sprintf("check %q (ID %d) could not start a PipelineRun for PR #%d. %s No matching PR comment trigger was verified.", fullName, failure.CheckID, failure.PRNumber, failure.Reason))
+				plan.noRetryAction = "Wait: No matching PR comment trigger was verified."
 			}
 		}
 		switch {
@@ -187,6 +195,9 @@ func retryable(check checkRun) bool {
 
 func checkState(check checkRun) string {
 	if check.startFailure != nil {
+		if check.startFailure.PRNumber > 0 && !check.isPRStartFailure() {
+			return "PR comment trigger unverified"
+		}
 		if check.startFailure.CheckID != check.ID {
 			return "newer PipelineRun creation failure has unknown PR or tag"
 		}

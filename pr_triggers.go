@@ -14,13 +14,16 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// missingPRTriggers verifies commands from the head repository without running source code.
-func (c githubClient) missingPRTriggers(ctx context.Context, sourceRepo, sha string, jobs []string) (verified, warnings []string) {
+// verifyPRTriggers checks commands against PipelineRun definitions at the PR head.
+func (c githubClient) verifyPRTriggers(ctx context.Context, sourceRepo, sha string, jobs []string) (verified, warnings []string) {
+	if len(jobs) == 0 {
+		return nil, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for _, job := range jobs {
 		if ctx.Err() != nil {
-			warnings = append(warnings, "could not finish verifying missing PR build triggers: "+ctx.Err().Error())
+			warnings = append(warnings, "could not finish verifying PR build triggers: "+ctx.Err().Error())
 			break
 		}
 		// shortcut: check the supported repositories' filename conventions; discover files if those conventions diverge.

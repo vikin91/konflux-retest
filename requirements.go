@@ -200,7 +200,8 @@ func validateRetagTasks(tasks []tektonTask) error {
 		case "sha256:cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3",
 			"sha256:ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c",
 			"sha256:48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef",
-			"sha256:6d1341c9d70c94f484668b9af3f618654d4743ce151a4b529ad19572960f8b82":
+			"sha256:6d1341c9d70c94f484668b9af3f618654d4743ce151a4b529ad19572960f8b82",
+			"sha256:53208915a4703f2fb6b0bee29baf993698537ec42c35aa74057b91d1636faa92":
 			knownBundle = true
 		}
 		if task.TaskSpec != nil || task.TaskRef.Resolver != "bundles" || ref["name"] != contract.task || ref["kind"] != "task" || !pinned || !knownBundle {

@@ -47,6 +47,7 @@ func TestResolveImage(t *testing.T) {
 		"cc0e455b": "cc0e455bf2f74a2f5b3dac0a08a6db9dd1586848b6d949c350164aaf6821faa3",
 		"ad73f114": "ad73f11475690a5d16d31ab4da48bb514da97954bdc2681439d76193a927e41c",
 		"48cf6499": "48cf64993928085331f0bd5171bc87ec2fd488cfbf4ca2b66627ea6040e011ef",
+		"53208915": "53208915a4703f2fb6b0bee29baf993698537ec42c35aa74057b91d1636faa92",
 	} {
 		t.Run(bundle, func(t *testing.T) {
 			for name, tt := range tests {

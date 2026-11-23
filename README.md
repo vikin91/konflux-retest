@@ -14,7 +14,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--post` to post those same commands using your configured GitHub login. The CLI posts one multiline comment per PR and one single-line commit comment per tag command. The report includes the posted comment links.
+By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--post` to post those same commands using your configured GitHub login. The CLI normally batches PR commands in one comment. Recovered GitHub check update failures and tag commands each get a separate comment. The report includes the posted comment links.
 
 The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--post`. Go projects that import the analyzer have access to the read-only API.
 
@@ -152,7 +152,7 @@ Warnings:
 Milestone 1 is not ready: main-on-push (in_progress).
 ```
 
-PR suggestions use `/konflux-retest <job>` and can share one PR comment with one command per line. Tag suggestions use `/retest <job> tag:<tag>` and must be posted on the linked commit, with **exactly one retest command per GitHub comment**. For example, post these as two separate comments for tag `2.39.28`:
+PR suggestions use `/konflux-retest <job>`. You can use one command per line in a shared PR comment when the report allows it. Tag suggestions use `/retest <job> tag:<tag>` and must be posted on the linked commit, with **exactly one retest command per GitHub comment**. For example, to retry two jobs for tag `2.39.28`, post these as two separate comments.
 
 ```text
 /retest scanner-on-push tag:2.39.28
@@ -254,7 +254,7 @@ Direct registry checks follow the consumer's [pinned wait-for-image task](https:
 2. Require `vcs-ref` and `source-location` labels. Require the resolved commit revision only when `source-location` exactly matches the consumer repository URL. Images from another repository, including Scanner, do not need the StackRox revision.
 3. Require the digest's Cosign `.att` artifact. Accept SLSA v0.2 task results only when all statuses are `Succeeded`; for SLSA v1 with Tekton Chains v2, require a successful condition on every `pipelineTask` dependency.
 
-These are the consumer's readiness checks, not cryptographic signature verification or full Conforma policy validation. The tool reads manifests, configuration, and attestations; it does not download image filesystem layers unless `--verify-pull` is enabled. It supports the inspected task bundles with digest prefixes `cc0e455b…`, `ad73f114…`, `48cf6499…`, and `6d1341c9…`. Unknown task bundles, changed parameter wiring, or unsupported Makefile recipes withhold the retest and report a resolution error so the tool does not assume that the consumer contract is unchanged. Library callers can use `errors.Is(err, ErrUnsupportedRetagContract)` to identify contract failures.
+These are the consumer's readiness checks, not cryptographic signature verification or full Conforma policy validation. The tool reads manifests, configuration, and attestations; it does not download image filesystem layers unless `--verify-pull` is enabled. It supports the inspected task bundles with digest prefixes `cc0e455b…`, `ad73f114…`, `48cf6499…`, `6d1341c9…`, and `53208915…`. Unknown task bundles, changed parameter wiring, or unsupported Makefile recipes withhold the retest and report a resolution error so the tool does not assume that the consumer contract is unchanged. Library callers can use `errors.Is(err, ErrUnsupportedRetagContract)` to identify contract failures.
 
 Missing images produce `Investigate missing images`; other unavailable inputs produce `Wait`. Warnings name the exact required image. Other eligible jobs can still be suggested, and downstream milestones remain blocked. For example:
 
@@ -296,11 +296,11 @@ PipelineRun annotations. Supply `KonfluxToken` for the cluster API or Tekton
 Results archive. Without verification, the library plans from commit-level
 check evidence.
 
-For an open PR, a check from the Red Hat Konflux app can also authorize a retry
-when it reports the temporary `deny-pipelinerun-create` admission policy and
-GitHub associates the check with exactly that PR and its current head.
-`StartFailure.PRNumber` records the association. These retries follow the same
-dependency order and image readiness rules.
+For an open PR, a creation failure from the Red Hat Konflux app can also
+authorize a retry when GitHub associates the check with exactly that PR and
+its current head. `StartFailure.PRNumber` records the association. The same
+dependency order and image readiness rules apply. See
+[retry cases](RETRY-CASES.md) for the eligible failure conditions and examples.
 
 Identity checks request all runs and examine job histories in parallel.
 Each lookup has up to 10 seconds, with up to 5 seconds for the live API

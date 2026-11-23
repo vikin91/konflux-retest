@@ -165,14 +165,23 @@ func TestRunCommentPosting(t *testing.T) {
 	)
 	tests := map[string]struct {
 		tag, post, stale, closed, noRetries bool
-		showMissing                         bool
+		showMissing, checkUpdate, noTrigger bool
 		wantPosts                           []string
 		wantReads, timeoutAt                int
 		wantOut, wantError                  string
 	}{
-		"should print PR commands by default":          {wantReads: 1, wantOut: "\n" + prCommand + "\n"},
-		"should print tag commands by default":         {tag: true, wantReads: 1, wantOut: "\n" + tagOne + "\n" + tagTwo + "\n"},
-		"should post one multiline PR comment":         {post: true, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
+		"should print PR commands by default":  {wantReads: 1, wantOut: "\n" + prCommand + "\n"},
+		"should print tag commands by default": {tag: true, wantReads: 1, wantOut: "\n" + tagOne + "\n" + tagTwo + "\n"},
+		"should post one multiline PR comment": {post: true, wantReads: 2, wantPosts: []string{prBatch}, wantOut: "Posted " + prLink + "1\n\nWarnings:"},
+		"should print a retry after a GitHub check update 404": {
+			checkUpdate: true, wantReads: 1, wantOut: "Post each retest command as a separate GitHub comment.\n" + prBatch + "\n",
+		},
+		"should post the recovered retry as a whole comment": {
+			checkUpdate: true, post: true, wantReads: 2, wantPosts: []string{prCommand, prSecond}, wantOut: "Posted " + prLink + "1\nPosted " + prLink + "2\n",
+		},
+		"should describe the blocker when the recovered job has no matching trigger": {
+			checkUpdate: true, noTrigger: true, wantReads: 1, wantOut: "No matching PR comment trigger was verified.",
+		},
 		"should post separate tag comments":            {tag: true, post: true, wantReads: 2, wantPosts: []string{tagOne, tagTwo}, wantOut: "Posted " + tagLink + "1\nPosted " + tagLink + "2\n"},
 		"should withhold comments on a changed PR":     {post: true, stale: true, wantReads: 2, wantError: "PR closed or its head changed"},
 		"should withhold comments on a closed PR":      {post: true, closed: true, wantReads: 2, wantError: "PR closed or its head changed"},
@@ -236,18 +245,28 @@ func TestRunCommentPosting(t *testing.T) {
 					if tt.tag {
 						body = fmt.Sprintf(`{"sha":%q}`, currentSHA)
 					} else {
-						body = fmt.Sprintf(`{"state":%q,"head":{"sha":%q}}`, state, currentSHA)
+						body = fmt.Sprintf(`{"id":123,"number":42,"state":%q,"head":{"sha":%q,"ref":"topic"}}`, state, currentSHA)
 					}
 				case r.Method == http.MethodGet && path == repoPath+"/commits/"+sha+"/check-runs":
 					body = `{"check_runs":[{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / scanner-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/one","status":"completed","conclusion":"failure"},{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / scanner-slim-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/two","status":"completed","conclusion":"failure"}]}`
 					if tt.noRetries {
 						body = `{"check_runs":[]}`
 					}
+					if tt.checkUpdate {
+						const github404 = "cannot use the API on the provider platform to create a in_progress status: PATCH https://api.github.com/repos/stackrox/scanner/check-runs/200: 404 Not Found []"
+						body = fmt.Sprintf(`{"check_runs":[
+							{"id":1,"app":{"id":296509},"name":"Red Hat Konflux / scanner-on-push","details_url":"https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/one","status":"completed","conclusion":"failure"},
+							{"id":2,"app":{"id":296509},"name":"Red Hat Konflux / scanner-slim-on-push","head_sha":%q,"status":"completed","conclusion":"failure",
+							 "pull_requests":[{"id":123,"number":42,"head":{"sha":%q,"ref":"topic"}}],"output":{"title":"pipelinerun start failure","text":%q}}]}`, sha, sha, github404)
+					}
 				case r.Method == http.MethodGet && strings.HasPrefix(path, repoPath+"/contents/.tekton/"):
 					if tt.tag || r.URL.Query().Get("ref") != sha {
 						t.Fatalf("unexpected PipelineRun lookup: %s", r.URL)
 					}
-					if tt.showMissing && path == repoPath+"/contents/.tekton/scanner-db-build.yaml" {
+					if tt.checkUpdate && !tt.noTrigger && path == repoPath+"/contents/.tekton/scanner-slim-build.yaml" {
+						manifest := "apiVersion: tekton.dev/v1\nkind: PipelineRun\nmetadata:\n  name: scanner-slim-on-push\n  annotations:\n    pipelinesascode.tekton.dev/on-comment: '^" + prSecond + "$'\n"
+						body = fmt.Sprintf(`{"encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte(manifest)))
+					} else if tt.showMissing && path == repoPath+"/contents/.tekton/scanner-db-build.yaml" {
 						manifest := "apiVersion: tekton.dev/v1\nkind: PipelineRun\nmetadata:\n  name: scanner-db-on-push\n  annotations:\n    pipelinesascode.tekton.dev/on-comment: '^" + prMissing + "$'\n"
 						body = fmt.Sprintf(`{"encoding":"base64","content":%q}`, base64.StdEncoding.EncodeToString([]byte(manifest)))
 					} else {
@@ -269,6 +288,9 @@ func TestRunCommentPosting(t *testing.T) {
 			code := run(t.Context(), args, &out, &diagnostics, konfluxretest.Config{HTTPClient: httpClient, KonfluxToken: fixtureKonfluxToken})
 			if !slices.Equal(posts, tt.wantPosts) || reads != tt.wantReads || !strings.Contains(out.String(), tt.wantOut) {
 				t.Fatalf("reads=%d posts=%q stdout=%q stderr=%q", reads, posts, out.String(), diagnostics.String())
+			}
+			if tt.noTrigger && strings.Contains(out.String(), "\n"+prSecond+"\n") {
+				t.Fatalf("unexpected retry for job without a matching trigger: %s", out.String())
 			}
 			if tt.wantError == "" {
 				if code != 0 || diagnostics.Len() != 0 {
