@@ -62,15 +62,28 @@ func TestParseOptions(t *testing.T) {
 	}
 }
 
-func TestHelpExplainsAuthenticationAndMilestones(t *testing.T) {
+func TestHelpListsFlagsBeforeDescription(t *testing.T) {
 	var out strings.Builder
-	_, err := parseOptions([]string{"--help"}, &out)
+	_, err := parseOptions([]string{"-h"}, &out)
 	if !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("got %v", err)
 	}
-	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push", "--tags", "Use --post", "scanner-db-slim-on-push"} {
-		if !strings.Contains(out.String(), text) {
-			t.Errorf("help missing %q", text)
+	_, help, ok := strings.Cut(out.String(), "\nFlags:\n")
+	if !ok {
+		t.Fatal("help missing Flags section")
+	}
+	flags, description, ok := strings.Cut(help, "\nDescription:\n")
+	if !ok {
+		t.Fatal("help missing Description section after Flags")
+	}
+	for _, text := range []string{"-h, --help", "-post", "-prs string", "-repo string", "-tags string", "-verify-pull"} {
+		if !strings.Contains("\n"+flags, "\n  "+text+"\n") {
+			t.Errorf("flag list missing %q", text)
+		}
+	}
+	for _, text := range []string{"GH_TOKEN", "GITHUB_TOKEN", "gh auth token --hostname github.com", "stderr", "operator-bundle-on-push", "--tags", "Use --post", "scanner-db-slim-on-push", "konflux-retest --repo stackrox/scanner --tags 2.39.27"} {
+		if !strings.Contains(description, text) {
+			t.Errorf("description missing %q", text)
 		}
 	}
 }

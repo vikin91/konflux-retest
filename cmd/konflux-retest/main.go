@@ -131,9 +131,17 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	firstTag := fs.String("tags", "", "tag names, separated by spaces or commas; put this flag last")
 	fs.Usage = func() {
-		fmt.Fprint(diagnostics, `Usage: konflux-retest --repo stackrox --prs 2345 3456 4567
-       konflux-retest --repo OWNER/REPO --prs 2345,3456,4567
-       konflux-retest --repo stackrox/scanner --tags 2.39.27
+		fmt.Fprint(diagnostics, `Usage: konflux-retest [flags] (--prs PR... | --tags TAG...)
+
+Flags:
+  -h, --help
+        show this help
+`)
+		fs.SetOutput(diagnostics)
+		fs.PrintDefaults()
+		fs.SetOutput(io.Discard)
+		fmt.Fprint(diagnostics, `
+Description:
 
 Prints ---, the PR or tagged commit link, Next action, and Warnings on stdout.
 Argument, setup, and posting errors go to stderr.
@@ -179,6 +187,11 @@ Scanner (stackrox/scanner) uses one milestone: scanner-on-push,
 scanner-db-on-push, scanner-slim-on-push, scanner-db-slim-on-push.
 Collector (stackrox/collector) uses one milestone: collector-on-push.
 FACT (stackrox/fact) uses one milestone: fact-on-push.
+
+Examples:
+  konflux-retest --repo stackrox --prs 2345 3456 4567
+  konflux-retest --repo OWNER/REPO --prs 2345,3456,4567
+  konflux-retest --repo stackrox/scanner --tags 2.39.27
 `)
 	}
 	if err := fs.Parse(args); err != nil {
