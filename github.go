@@ -19,13 +19,15 @@ type (
 		ID int64 `json:"id"`
 	}
 	githubClient struct {
-		verifyIdentity bool
-		identity       func(context.Context, checkRun, string, string, string, int) (runObservation, error)
-		baseURL        string
-		token          string
-		http           *http.Client
+		verifyIdentity          bool
+		verifyMissingPRTriggers bool
+		identity                func(context.Context, checkRun, string, string, string, int) (runObservation, error)
+		baseURL                 string
+		token                   string
+		http                    *http.Client
 	}
-	pullRequest struct {
+	githubStatusError int
+	pullRequest       struct {
 		ID     int64  `json:"id"`
 		Number int    `json:"number"`
 		State  string `json:"state"`
@@ -58,6 +60,10 @@ type (
 		startFailure *StartFailure
 	}
 )
+
+func (status githubStatusError) Error() string {
+	return fmt.Sprintf("GitHub API returned HTTP %d (%s); check token access and API rate limits", status, http.StatusText(int(status)))
+}
 
 // file reads pinned source, including fork-specific pipeline parameters.
 func (c githubClient) file(ctx context.Context, repo, sha, path string) ([]byte, error) {
@@ -96,7 +102,7 @@ func (c githubClient) get(ctx context.Context, path string, target any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// Do not echo arbitrary response bodies, which can contain credentials or terminal controls.
-		return fmt.Errorf("GitHub API returned HTTP %d (%s); check token access and API rate limits", resp.StatusCode, http.StatusText(resp.StatusCode))
+		return githubStatusError(resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
 		return diagnosticError("could not decode GitHub response", err)
@@ -117,6 +123,9 @@ func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun,
 		path := fmt.Sprintf("/repos/%s/commits/%s/check-runs?app_id=%d&filter=%s&per_page=100&page=%d", repo, url.PathEscape(sha), redHatKonfluxAppID, filter, page)
 		if err := c.get(ctx, path, &response); err != nil {
 			return nil, err
+		}
+		if c.verifyMissingPRTriggers && response.CheckRuns == nil {
+			return nil, errors.New("GitHub response is missing the check run inventory")
 		}
 		checks = append(checks, response.CheckRuns...)
 		if len(response.CheckRuns) < 100 {
@@ -156,7 +165,11 @@ func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker,
 				latest = check
 			}
 		}
-		reason, notes, err := checker.check(ctx, latest, requirement)
+		jobChecker := checker
+		if latest.Name == "" {
+			jobChecker.logs = nil
+		}
+		reason, notes, err := jobChecker.check(ctx, latest, requirement)
 		warnings = append(warnings, notes...)
 		if reason != "" {
 			unavailable[job] = requirement.image() + ": " + reason

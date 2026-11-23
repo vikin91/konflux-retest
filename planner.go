@@ -42,6 +42,7 @@ var (
 
 type retryPlan struct {
 	jobs           []string
+	missingJobs    []string
 	messages       []string
 	waits          []string
 	noRetryAction  string
@@ -68,11 +69,6 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 		if !exists || check.ID > old.ID {
 			latest[check.Name] = check
 		}
-	}
-	if len(latest) == 0 {
-		plan.noRetryAction = "Wait for build checks to appear for this commit."
-		plan.messages = append(plan.messages, "no Konflux checks found on this commit.")
-		return plan
 	}
 	names := make([]string, 0, len(latest))
 	for name := range latest {
@@ -131,6 +127,7 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 			case !exists && !scannerRetagsPresent && slices.Contains(scannerRetagJobs, name):
 				continue
 			case !exists:
+				plan.missingJobs = append(plan.missingJobs, name)
 				blocked = append(blocked, name+" (missing)")
 			case passed(check):
 			case retryable(check):
@@ -155,6 +152,10 @@ func planRetries(repo string, checks []checkRun, unavailable map[string]string) 
 			plan.messages = append(plan.messages, fmt.Sprintf("Milestone %d is not ready: %s.", phase+1, strings.Join(blocked, ", ")))
 		}
 		break
+	}
+	if len(latest) == 0 {
+		plan.noRetryAction = "Wait for build checks to appear for this commit."
+		plan.messages = []string{"no Konflux checks found on this commit."}
 	}
 	return plan
 }

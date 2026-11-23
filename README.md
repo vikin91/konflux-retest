@@ -14,7 +14,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 ## Does this post anything in my name?
 
-By default, the CLI only prints the `/konflux-retest` and `/retest` commands. Add `--full-auto` to post one GitHub comment per eligible job using your configured GitHub login. The CLI prints the posted comment links alongside the usual report.
+By default, the CLI only prints the `/konflux-retest` and `/retest` commands. Add `--full-auto` to post one GitHub comment per eligible failed job using your configured GitHub login. Add `--start-missing` to post verified missing-build commands for PRs too. The CLI prints the posted comment links alongside the usual report.
 
 The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--full-auto`. Go projects that import the analyzer have access to the read-only API.
 
@@ -51,7 +51,7 @@ func checkBuild(ctx context.Context, token string) (konfluxretest.Result, error)
 }
 ```
 
-Both functions require a full `OWNER/REPO` name and accept a context for cancellation. `Result` contains the link, resolved commit SHA, tag when resolved, next action, retry job names, explanatory message, and warnings. An error can accompany a partial result: unaffected jobs remain eligible, while jobs whose inputs could not be verified are withheld. Inspect both the result and the error.
+Both functions require a full `OWNER/REPO` name and accept a context for cancellation. `Result` contains the link, resolved commit SHA, tag when resolved, next action, retry job names, explanatory message, and warnings. `Config.VerifyMissingPRTriggers` enables read-only verification of missing PR builds, reported separately in `Result.MissingPRJobs`. An error can accompany a partial result: unaffected jobs remain eligible, while jobs whose inputs could not be verified are withheld. Inspect both the result and the error.
 
 The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
 
@@ -114,6 +114,12 @@ Post eligible retest comments for a PR or tag:
 ./konflux-retest --repo stackrox/scanner --full-auto --tags 2.39.27
 ```
 
+To also post the verified commands shown under **Start missing builds** for a PR, use both flags:
+
+```sh
+./konflux-retest --repo stackrox --full-auto --start-missing --prs 23956
+```
+
 The CLI checks the PR head or tag again before posting. If a comment fails, it reports the confirmed links, stops posting for that target, and exits with status 1 after processing the remaining targets. If a request may have succeeded, check GitHub before rerunning the command.
 
 Save the complete PR reports, including warnings, to a file:
@@ -130,7 +136,7 @@ Show help, including authentication and the embedded milestones:
 
 `--repo stackrox` means `stackrox/stackrox`. Other short names use the `stackrox` owner; an explicit `OWNER/REPO` is also accepted. The `stackrox/scanner`, `stackrox/collector`, and `stackrox/fact` repositories use their own job catalogs; other repositories use the StackRox catalog. Choose either `--prs` or `--tags` and put other flags before the list. Both lists accept spaces or commas and process duplicate entries once.
 
-Every PR report follows this format on stdout. `Next action` is `Retest`, `Investigate missing images`, `Wait`, or `None`. Warnings appear once under `Warnings:`; argument and startup errors use stderr. No authentication banner is printed.
+Every PR report follows this format on stdout. `Next action` is `Retest`, `Start missing builds`, `Investigate missing images`, `Wait`, or `None`. Warnings appear once under `Warnings:`. Argument and startup errors use stderr. No authentication banner is printed.
 
 ```text
 ---
@@ -231,7 +237,7 @@ The policy catalog in `planner.go` recognizes both `Red Hat Konflux / SCENARIO` 
 
 1. Resolve the PR head or tag to a commit SHA and query all pages of Konflux checks. Examine each job's newest attempts first and use the newest run verified for the requested PR or tag. A newer attempt with unknown origin can withhold that job's retry.
 2. Check input readiness for candidate `retag-collector`, `retag-fact`, and Scanner V2 retags as described below. Suggest completed checks with conclusions `failure`, `timed_out`, `cancelled`, `stale`, or `startup_failure` in the earliest unfinished milestone. Include failed independent `checks` at the same time. Jobs within a milestone can run in parallel.
-3. Require every applicable predecessor in earlier milestones to have completed successfully before suggesting downstream jobs. Pending, missing, skipped, neutral, or action-required checks are not successful image producers and receive no retry command. Existing failures in their own milestone can still be retried.
+3. Require every applicable predecessor in earlier milestones to have completed successfully before suggesting downstream jobs. Pending, missing, skipped, neutral, and action-required checks still block later milestones. For a missing PR build in the first unfinished milestone, the CLI looks for its PipelineRun at the PR head and verifies that its `on-comment` pattern matches the command. This uses `.tekton/<component>-build.yaml` for `*-on-push` jobs and `.tekton/<job>.yaml` for retags and custom snapshots. A check with unresolved identity or a trigger with path or label filters withholds the start hint. Missing retags also require ready inputs.
 4. Never retry policy checks automatically. Their failures may need CVE remediation or an upstream build fix.
 5. Warn on every unknown Konflux check, even if successful. Use only checks from the Red Hat Konflux GitHub App (ID `296509`). Unknown unfinished checks block milestones 2 and 3; they never become copyable commands.
 6. Skip closed or merged PRs. Continue processing other PRs or tags after an API, registry-access, network, or requirement-resolution error, but exit with status 1. Invalid command-line arguments exit with status 2. Warnings and blocked milestones alone do not make the command fail.

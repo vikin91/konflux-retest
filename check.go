@@ -23,9 +23,11 @@ type (
 		// Only a scoped GitHub creation failure can authorize a retry without a PipelineRun.
 		// Leave this enabled when using Jobs to automate retries.
 		VerifyRunIdentity bool
-		GitHubToken       string
-		QuayUsername      string
-		QuayPassword      string
+		// VerifyMissingPRTriggers enables read-only discovery of starts for missing PR builds.
+		VerifyMissingPRTriggers bool
+		GitHubToken             string
+		QuayUsername            string
+		QuayPassword            string
 
 		// HTTPClient supplies transport and timeout settings. Nil uses a 30-second timeout.
 		// The client is copied; redirect policies are set to protect service credentials.
@@ -56,6 +58,9 @@ type (
 		Message  string
 		Jobs     []string
 		Warnings []string
+		// MissingPRJobs lists missing builds with a verified PR comment trigger and ready inputs.
+		// These builds still block downstream milestones until they pass.
+		MissingPRJobs []string
 		// Runs exposes the latest scoped job observations. A newer unscoped
 		// creation failure can withhold a retry while the verified run remains visible.
 		Runs []Run
@@ -107,6 +112,7 @@ func CheckPR(ctx context.Context, config Config, repo string, number int) (Resul
 		return failedResult(Result{}, errors.New("repo must be OWNER/REPO and PR number must be positive"))
 	}
 	client, checker := config.clients()
+	client.verifyMissingPRTriggers = config.VerifyMissingPRTriggers
 	return checkPR(ctx, client, checker, repo, number)
 }
 
@@ -206,11 +212,7 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	if err != nil {
 		return failedResult(result, err)
 	}
-	if len(checks) == 0 {
-		result.Action = ActionWait
-		result.Message = "GitHub returned no check runs for this commit."
-		return result, nil
-	}
+	hasGitHubChecks := len(checks) > 0
 	for i := range checks {
 		check := &checks[i]
 		if failure := pipelineRunStartFailure(*check); failure != nil {
@@ -243,23 +245,38 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	var identityErr error
 	var identityWarnings []string
 	const noVerifiedBuild = "No verified build checks match the requested tag or PR."
-	if c.verifyIdentity {
+	if c.verifyIdentity && hasGitHubChecks {
 		checks, identityWarnings, identityErr = c.scopeChecks(ctx, checks, repo, result)
-		if len(checks) == 0 {
-			result.Action = ActionWait
-			result.Message = noVerifiedBuild
-			return result, nil
-		}
 	}
 	plan := planRetries(repo, checks, nil)
-	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, plan.jobs)
+	var candidates, triggerWarnings []string
+	if c.verifyMissingPRTriggers && result.prNumber > 0 && len(plan.missingJobs) > 0 {
+		candidates, triggerWarnings = c.missingPRTriggers(ctx, sourceRepo, result.SHA, plan.missingJobs)
+	}
+	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, slices.Concat(plan.jobs, candidates))
 	if len(unavailable) > 0 {
 		plan = planRetries(repo, checks, unavailable)
+	}
+	for _, job := range candidates {
+		if reason := unavailable[job]; reason != "" {
+			triggerWarnings = append(triggerWarnings, fmt.Sprintf("cannot start missing build %s: %s.", job, reason))
+			continue
+		}
+		result.MissingPRJobs = append(result.MissingPRJobs, job)
+	}
+	if len(checks) == 0 {
+		result.Action = ActionWait
+		result.Message = noVerifiedBuild
+		if !hasGitHubChecks {
+			result.Message = "GitHub returned no check runs for this commit."
+		}
+		result.Warnings = slices.Concat(triggerWarnings, warnings)
+		return result, inputErr
 	}
 	if c.verifyIdentity && !plan.hasScopedBuild {
 		plan.noRetryAction = "Wait: " + noVerifiedBuild
 	}
-	result = resultFromPlan(result, plan, append(identityWarnings, warnings...))
+	result = resultFromPlan(result, plan, slices.Concat(identityWarnings, warnings, triggerWarnings))
 	latest := map[string]checkRun{}
 	for _, check := range checks {
 		if isKonflux(check) && check.ID > latest[check.Name].ID {
