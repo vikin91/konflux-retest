@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/vikin91/konflux-retest"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -53,7 +55,7 @@ func TestRunContinuesAfterLookupFailure(t *testing.T) {
 				return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			var out, diagnostics strings.Builder
-			code := run(t.Context(), tt.args, &out, &diagnostics, fixtureKonfluxToken)
+			code := run(t.Context(), tt.args, &out, &diagnostics, konfluxretest.Config{KonfluxToken: fixtureKonfluxToken})
 			if code != 1 || diagnostics.Len() != 0 || len(paths) < 2 || paths[0] != tt.first || paths[1] != tt.second {
 				t.Fatalf("code=%d stderr=%q paths=%v", code, diagnostics.String(), paths)
 			}
@@ -83,7 +85,7 @@ func TestRunCollectorPR(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	var out, diagnostics strings.Builder
-	code := run(t.Context(), []string{"--repo", "collector", "--prs", "4307"}, &out, &diagnostics, fixtureKonfluxToken)
+	code := run(t.Context(), []string{"--repo", "collector", "--prs", "4307"}, &out, &diagnostics, konfluxretest.Config{KonfluxToken: fixtureKonfluxToken})
 	want := "---\nhttps://github.com/stackrox/collector/pull/4307\n\nNext action: Retest\n/konflux-retest collector-on-push\n\nWarnings:\nNone.\n"
 	if code != 0 || diagnostics.Len() != 0 || out.String() != want {
 		t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)
@@ -132,7 +134,7 @@ func TestRunFactTag(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
 			})
 			var out, diagnostics strings.Builder
-			code := run(t.Context(), []string{"--repo", tt.repo, "--tags", "0.3.12"}, &out, &diagnostics, fixtureKonfluxToken)
+			code := run(t.Context(), []string{"--repo", tt.repo, "--tags", "0.3.12"}, &out, &diagnostics, konfluxretest.Config{KonfluxToken: fixtureKonfluxToken})
 			want := "---\nhttps://github.com/stackrox/fact/commit/" + sha + "\nTag: 0.3.12\n\n" + tt.want
 			if code != 0 || diagnostics.Len() != 0 || out.String() != want {
 				t.Fatalf("code=%d stderr=%q output=%q; want %q", code, diagnostics.String(), out.String(), want)

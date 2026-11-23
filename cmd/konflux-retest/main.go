@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -29,12 +30,17 @@ const assessmentTimeout = 2 * time.Minute
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, konfluxTokens())
+	login := konfluxLogin{transport: http.DefaultTransport}
+	config := konfluxretest.Config{
+		HTTPClient:   &http.Client{Transport: &login, Timeout: 30 * time.Second},
+		KonfluxToken: login.token,
+	}
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr, config)
 	stop()
 	os.Exit(code)
 }
 
-func run(ctx context.Context, args []string, out, diagnostics io.Writer, konfluxToken func(context.Context, string) (string, error)) int {
+func run(ctx context.Context, args []string, out, diagnostics io.Writer, config konfluxretest.Config) int {
 	opts, err := parseOptions(args, diagnostics)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
@@ -48,13 +54,10 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, konflux
 		fmt.Fprintf(diagnostics, "error: %v\n", err)
 		return 1
 	}
-	config := konfluxretest.Config{
-		VerifyRunIdentity: true,
-		GitHubToken:       token,
-		QuayUsername:      os.Getenv("QUAY_USERNAME"),
-		QuayPassword:      os.Getenv("QUAY_PASSWORD"),
-		KonfluxToken:      konfluxToken,
-	}
+	config.VerifyRunIdentity = true
+	config.GitHubToken = token
+	config.QuayUsername = os.Getenv("QUAY_USERNAME")
+	config.QuayPassword = os.Getenv("QUAY_PASSWORD")
 	if opts.verifyPull {
 		config.PullImage = dockerPull
 	}
