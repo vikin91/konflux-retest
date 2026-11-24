@@ -27,7 +27,7 @@ make build
 ./konflux-retest --version
 ```
 
-`make build` embeds the Git version. Use `--version` or `-V` to print it. A build at a release tag prints the tag, such as `v0.1.0`. A build after a tag includes the commit count and short SHA, such as `v0.1.0-27-g0103388`. Local changes to tracked files add `-dirty`.
+`make build` embeds the Git version. Use `--version`, `-V`, or `-v` to print it. A build at a release tag prints the tag, such as `v0.1.0`. A build after a tag includes the commit count and short SHA, such as `v0.1.0-27-g0103388`. Local changes to tracked files add `-dirty`.
 
 ## Use from another Go project
 

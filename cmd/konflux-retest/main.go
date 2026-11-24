@@ -140,9 +140,10 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	var showVersion bool
 	fs.BoolVar(&showVersion, "version", false, "print the version")
 	fs.BoolVar(&showVersion, "V", false, "alias for --version")
+	fs.BoolVar(&showVersion, "v", false, "alias for --version")
 	fs.Usage = func() {
 		fmt.Fprint(diagnostics, `Usage: konflux-retest [flags] (--prs PR... | --tags TAG...)
-       konflux-retest (-V | --version)
+       konflux-retest (-v | -V | --version)
 
 Flags:
   -h, --help

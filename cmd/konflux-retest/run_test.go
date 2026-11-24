@@ -26,10 +26,16 @@ func TestRunPrintsVersion(t *testing.T) {
 	t.Setenv("GH_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("PATH", "")
-	for _, arg := range []string{"-V", "--version"} {
-		t.Run(arg, func(t *testing.T) {
+	tests := map[string][]string{
+		"lowercase short flag": {"-v"},
+		"uppercase short flag": {"-V"},
+		"long flag":            {"--version"},
+		"after a single PR":    {"--repo", "stackrox/stackrox", "--prs", "24152", "-v"},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
 			var out, diagnostics strings.Builder
-			code := run(t.Context(), []string{arg}, &out, &diagnostics, konfluxretest.Config{})
+			code := run(t.Context(), args, &out, &diagnostics, konfluxretest.Config{})
 			if code != 0 || diagnostics.Len() != 0 || out.String() != version+"\n" {
 				t.Fatalf("code=%d stderr=%q stdout=%q, want stdout=%q", code, diagnostics.String(), out.String(), version+"\n")
 			}
