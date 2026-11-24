@@ -23,8 +23,11 @@ The read-only analyzer returns eligible jobs and the assessed commit SHA to the 
 Requires Go 1.26 or newer to build. The resulting binary has no Go runtime dependencies. GitHub CLI is needed only when using its saved login instead of an environment token.
 
 ```sh
-go build -o konflux-retest ./cmd/konflux-retest
+make build
+./konflux-retest --version
 ```
+
+`make build` embeds the Git version. Use `--version` or `-V` to print it. A build at a release tag prints the tag, such as `v0.1.0`. A build after a tag includes the commit count and short SHA, such as `v0.1.0-27-g0103388`. Local changes to tracked files add `-dirty`.
 
 ## Use from another Go project
 

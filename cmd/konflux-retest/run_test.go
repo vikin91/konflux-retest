@@ -22,6 +22,21 @@ func fixtureKonfluxToken(context.Context, string) (string, error) {
 	return "test-konflux-token", nil
 }
 
+func TestRunPrintsVersion(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("PATH", "")
+	for _, arg := range []string{"-V", "--version"} {
+		t.Run(arg, func(t *testing.T) {
+			var out, diagnostics strings.Builder
+			code := run(t.Context(), []string{arg}, &out, &diagnostics, konfluxretest.Config{})
+			if code != 0 || diagnostics.Len() != 0 || out.String() != version+"\n" {
+				t.Fatalf("code=%d stderr=%q stdout=%q, want stdout=%q", code, diagnostics.String(), out.String(), version+"\n")
+			}
+		})
+	}
+}
+
 func TestRunContinuesAfterLookupFailure(t *testing.T) {
 	t.Setenv("GH_TOKEN", "test-token")
 	tests := map[string]struct {

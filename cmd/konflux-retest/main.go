@@ -22,14 +22,17 @@ import (
 )
 
 type options struct {
-	repo       string
-	prs        []int
-	tags       []string
-	verifyPull bool
-	post       bool
+	repo        string
+	prs         []int
+	tags        []string
+	verifyPull  bool
+	post        bool
+	showVersion bool
 }
 
 const assessmentTimeout = 2 * time.Minute
+
+var version = "dev"
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -51,6 +54,10 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 	if err != nil {
 		fmt.Fprintf(diagnostics, "error: %v\n", err)
 		return 2
+	}
+	if opts.showVersion {
+		fmt.Fprintln(out, version)
+		return 0
 	}
 	token, _, err := resolveToken(ctx, os.Getenv, savedToken)
 	if err != nil {
@@ -130,8 +137,12 @@ func parseOptions(args []string, diagnostics io.Writer) (options, error) {
 	post := fs.Bool("post", false, "post suggested comments to GitHub")
 	firstPR := fs.String("prs", "", "PR numbers, separated by spaces or commas; put this flag last")
 	firstTag := fs.String("tags", "", "tag names, separated by spaces or commas; put this flag last")
+	var showVersion bool
+	fs.BoolVar(&showVersion, "version", false, "print the version")
+	fs.BoolVar(&showVersion, "V", false, "alias for --version")
 	fs.Usage = func() {
 		fmt.Fprint(diagnostics, `Usage: konflux-retest [flags] (--prs PR... | --tags TAG...)
+       konflux-retest (-V | --version)
 
 Flags:
   -h, --help
@@ -197,6 +208,9 @@ Examples:
 	}
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
+	}
+	if showVersion {
+		return options{showVersion: true}, nil
 	}
 	var hasPRs, hasTags bool
 	fs.Visit(func(f *flag.Flag) {

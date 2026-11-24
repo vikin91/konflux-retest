@@ -76,7 +76,7 @@ func TestHelpListsFlagsBeforeDescription(t *testing.T) {
 	if !ok {
 		t.Fatal("help missing Description section after Flags")
 	}
-	for _, text := range []string{"-h, --help", "-post", "-prs string", "-repo string", "-tags string", "-verify-pull"} {
+	for _, text := range []string{"-h, --help", "-V\talias for --version", "-post", "-prs string", "-repo string", "-tags string", "-verify-pull", "-version"} {
 		if !strings.Contains("\n"+flags, "\n  "+text+"\n") {
 			t.Errorf("flag list missing %q", text)
 		}
