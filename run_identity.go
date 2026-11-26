@@ -208,7 +208,7 @@ func matchRunIdentity(data []byte, namespace, name string, id int64, repo, sha, 
 				return false, nil
 			}
 		}
-	case "pull_request":
+	case "pull_request", "pull_request_labeled":
 	default:
 		return false, nil
 	}

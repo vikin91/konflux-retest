@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -129,6 +130,55 @@ func TestRunIdentity(t *testing.T) {
 			}
 			if _, err := matchRunIdentity(data, "builds", "run", 124, "stackrox/fact", "head", tc.tag, tc.pr); err == nil {
 				t.Fatal("accepted wrong check ID")
+			}
+		})
+	}
+}
+
+func TestLabeledPRSuccessSuppressesRetry(t *testing.T) {
+	const repo = "stackrox/fact"
+	for name, tc := range map[string]struct {
+		prNumber string
+		wantID   int64
+		retry    bool
+	}{
+		"matching PR":  {"42", 2, false},
+		"different PR": {"43", 1, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			older := buildCheck("fact-on-push", "completed", "failure")
+			newer := buildCheck("fact-on-push", "completed", "success")
+			newer.ID = 2
+			client := githubClient{identity: func(_ context.Context, check checkRun, repo, sha, tag string, pr int) (runObservation, error) {
+				event, number := "pull_request", "42"
+				if check.ID == newer.ID {
+					event, number = "pull_request_labeled", tc.prNumber
+				}
+				var run pipelineRunIdentity
+				run.Metadata.Name, run.Metadata.Namespace = "run", "builds"
+				const p = pacAnnotationPrefix
+				run.Metadata.Annotations = map[string]string{
+					p + "check-run-id": strconv.FormatInt(check.ID, 10),
+					p + "sha":          "head",
+					p + "repo-url":     "https://github.com/stackrox/fact",
+					p + "event-type":   event,
+					p + "branch":       "master",
+					p + "pull-request": number,
+				}
+				data, err := json.Marshal(run)
+				if err != nil {
+					return runObservation{}, err
+				}
+				matches, err := matchRunIdentity(data, "builds", "run", check.ID, repo, sha, tag, pr)
+				return runObservation{matches: matches}, err
+			}}
+			checks, warnings, err := client.scopeChecks(t.Context(), []checkRun{older, newer}, repo, Result{SHA: "head", prNumber: 42})
+			if err != nil || len(warnings) != 0 || len(checks) != 1 || checks[0].ID != tc.wantID {
+				t.Fatalf("checks=%+v warnings=%v error=%v, want check %d", checks, warnings, err, tc.wantID)
+			}
+			plan := planRetries(repo, checks, nil)
+			if (len(plan.jobs) > 0) != tc.retry {
+				t.Fatalf("jobs=%v, want retry=%t", plan.jobs, tc.retry)
 			}
 		})
 	}
