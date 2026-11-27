@@ -38,12 +38,15 @@ type (
 	}
 )
 
-var konfluxName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+var (
+	konfluxName            = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+	errKonfluxLookupDenied = errors.New("lookup denied by caller policy")
+)
 
 // tokenForRun applies caller policy before accessing credentials for either Konflux endpoint.
 func (c *konfluxClient) tokenForRun(ctx context.Context, appID int64, apiHost, namespace string) (string, error) {
 	if c.allowLookup != nil && !c.allowLookup(ctx, appID, apiHost, namespace) {
-		return "", errors.New("lookup denied by caller policy")
+		return "", errKonfluxLookupDenied
 	}
 	token, err := c.token(ctx, apiHost)
 	if err != nil {

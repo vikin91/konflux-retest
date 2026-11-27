@@ -70,6 +70,22 @@ trust. The library uses that token for the cluster API and its Tekton Results
 route. For a hosted app, use `AllowKonfluxLookup` to check the GitHub App ID,
 API hostname, and namespace before the library requests a token.
 
+Before assessing a batch, call `konfluxretest.CheckKonfluxAccess(ctx, config,
+appID, apiHost, namespace)` once per target host and namespace. Pass the GitHub
+App ID used by `AllowKonfluxLookup`, or zero when no App applies. The preflight
+verifies that the cluster accepts the token and permits `get` on PipelineRuns
+in that namespace. It sends one authorization review and reads no PipelineRuns,
+archived logs, or images. Access to Tekton Results is outside the scope of the
+review. If your cluster API uses a nondefault HTTPS port, configure your
+`HTTPClient` transport to route the review to that port.
+
+If the preflight returns an error, stop before calling `CheckPR` or `CheckTag`.
+Use `errors.As` to inspect `*konfluxretest.KonfluxAccessError` for the host,
+namespace, and failure category. For example, `KonfluxAccessAuthentication`
+covers rejected tokens, `KonfluxAccessForbidden` covers denied access, and
+`KonfluxAccessTransport` covers connection failures. Run the preflight again
+when you change credentials or start another batch.
+
 For local development, add a `replace github.com/vikin91/konflux-retest => /path/to/konflux-retest` directive to the consuming module.
 
 ## Module releases

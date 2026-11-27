@@ -129,15 +129,20 @@ func CheckTag(ctx context.Context, config Config, repo, tag string) (Result, err
 	return checkTag(ctx, client, checker, repo, tag)
 }
 
-func (config Config) clients() (githubClient, inputChecker) {
+func (config Config) serviceHTTPClient() http.Client {
 	httpClient := http.Client{Timeout: 30 * time.Second}
 	if config.HTTPClient != nil {
 		httpClient = *config.HTTPClient
 	}
-	registryHTTP := httpClient
 	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	return httpClient
+}
+
+func (config Config) clients() (githubClient, inputChecker) {
+	httpClient := config.serviceHTTPClient()
+	registryHTTP := httpClient
 	registryHTTP.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 || req.URL.Scheme != "https" {
 			return errors.New("unsupported registry redirect")

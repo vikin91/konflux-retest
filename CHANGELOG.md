@@ -7,6 +7,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Added
 
 1. `PRPostingComments` is a compatible addition to the Go API that returns the same PR comment bodies and posting order as the CLI.
+2. `CheckKonfluxAccess` checks a credential's PipelineRun permissions for a cluster and namespace before assessment and returns a typed error on failure.
 
 ## [0.2.0] - 2026-11-27
 
