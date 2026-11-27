@@ -172,7 +172,7 @@ func TestLabeledPRSuccessSuppressesRetry(t *testing.T) {
 				matches, err := matchRunIdentity(data, "builds", "run", check.ID, repo, sha, tag, pr)
 				return runObservation{matches: matches}, err
 			}}
-			checks, warnings, err := client.scopeChecks(t.Context(), []checkRun{older, newer}, repo, Result{SHA: "head", prNumber: 42})
+			checks, warnings, err := client.scopeChecks(t.Context(), []checkRun{older, newer}, repo, &Result{SHA: "head", prNumber: 42})
 			if err != nil || len(warnings) != 0 || len(checks) != 1 || checks[0].ID != tc.wantID {
 				t.Fatalf("checks=%+v warnings=%v error=%v, want check %d", checks, warnings, err, tc.wantID)
 			}

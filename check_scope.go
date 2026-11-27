@@ -20,11 +20,11 @@ const (
 
 type scopedJob struct {
 	run    checkRun
-	issues []error
+	issues []CheckDiagnostic
 }
 
 // scopeChecks reads unrelated job histories in parallel within the identity budget.
-func (c githubClient) scopeChecks(ctx context.Context, checks []checkRun, repo string, result Result) ([]checkRun, []string, error) {
+func (c githubClient) scopeChecks(ctx context.Context, checks []checkRun, repo string, result *Result) ([]checkRun, []string, error) {
 	ctx, cancel := context.WithTimeout(ctx, scopeTimeout)
 	defer cancel()
 	var scoped []checkRun
@@ -51,7 +51,7 @@ func (c githubClient) scopeChecks(ctx context.Context, checks []checkRun, repo s
 	for range min(parallelScopeChecks, len(names)) {
 		workers.Go(func() {
 			for i := range jobs {
-				results[i] = c.scopeJob(ctx, groups[names[i]], repo, result)
+				results[i] = c.scopeJob(ctx, groups[names[i]], repo, *result)
 			}
 		})
 	}
@@ -64,10 +64,11 @@ func (c githubClient) scopeChecks(ctx context.Context, checks []checkRun, repo s
 			scoped = append(scoped, found.run)
 		}
 		for _, issue := range found.issues {
-			warnings = append(warnings, "identity unknown: "+issue.Error())
-			if _, unknownOrigin := errors.AsType[runOriginError](issue); !unknownOrigin {
-				lookupErrors = append(lookupErrors, issue)
+			warnings = append(warnings, "identity unknown: "+issue.Err.Error())
+			if issue.Severity == DiagnosticError {
+				lookupErrors = append(lookupErrors, issue.Err)
 			}
+			result.Diagnostics = append(result.Diagnostics, issue)
 		}
 	}
 	return scoped, warnings, summarizeIdentityErrors(lookupErrors)
@@ -90,7 +91,7 @@ func (c githubClient) scopeJob(ctx context.Context, checks []checkRun, repo stri
 		observed, err := runObservation{}, ctx.Err()
 		if err == nil {
 			if c.identity == nil {
-				err = errors.New("PipelineRun identity access is unavailable")
+				err = classify(ErrCheckCredential, errors.New("PipelineRun identity access is unavailable"))
 			} else {
 				lookupCtx, cancel := context.WithTimeout(ctx, runLookupTimeout)
 				observed, err = c.identity(lookupCtx, check, repo, result.SHA, result.Tag, result.prNumber)
@@ -98,7 +99,17 @@ func (c githubClient) scopeJob(ctx context.Context, checks []checkRun, repo stri
 			}
 		}
 		if err != nil {
-			scoped.issues = append(scoped.issues, fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, reportURL(check.DetailsURL), err))
+			if errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrCheckNetwork) {
+				err = classify(ErrCheckNetwork, err)
+			}
+			severity := DiagnosticError
+			if _, unknownOrigin := errors.AsType[runOriginError](err); unknownOrigin {
+				severity = DiagnosticWarning
+			}
+			scoped.issues = append(scoped.issues, CheckDiagnostic{
+				Job: strings.TrimPrefix(check.Name, checkPrefix), CheckRunID: check.ID, Severity: severity,
+				Err: fmt.Errorf("check %q (run %d, URL %q): %w", check.Name, check.ID, reportURL(check.DetailsURL), err),
+			})
 			if scoped.run.startFailure == nil {
 				check.Status, check.Conclusion = "unknown", ""
 				scoped.run = check

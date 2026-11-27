@@ -36,7 +36,15 @@ type (
 		reason   string
 		accepted bool
 	}
+	konfluxStatusError struct {
+		address string
+		status  int
+	}
 )
+
+func (e konfluxStatusError) Error() string {
+	return fmt.Sprintf("GET %s returned HTTP %d (%s)", e.address, e.status, http.StatusText(e.status))
+}
 
 var (
 	konfluxName            = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -46,14 +54,22 @@ var (
 // tokenForRun applies caller policy before accessing credentials for either Konflux endpoint.
 func (c *konfluxClient) tokenForRun(ctx context.Context, appID int64, apiHost, namespace string) (string, error) {
 	if c.allowLookup != nil && !c.allowLookup(ctx, appID, apiHost, namespace) {
-		return "", errKonfluxLookupDenied
+		return "", classify(ErrCheckPermission, errKonfluxLookupDenied)
 	}
 	token, err := c.token(ctx, apiHost)
 	if err != nil {
-		return "", diagnosticError("Konflux authentication failed for "+apiHost, err)
+		message := "Konflux authentication failed for " + apiHost
+		if isNetworkError(err) {
+			return "", networkDiagnostic(message, err)
+		}
+		cause := diagnosticError(message, err)
+		if errors.Is(cause, context.Canceled) {
+			return "", cause
+		}
+		return "", classify(ErrCheckCredential, cause)
 	}
 	if token == "" {
-		return "", fmt.Errorf("authentication returned an empty token for %s", apiHost)
+		return "", classify(ErrCheckCredential, fmt.Errorf("authentication returned an empty token for %s", apiHost))
 	}
 	return token, nil
 }
@@ -134,15 +150,16 @@ func (c *konfluxClient) get(ctx context.Context, address, token string) ([]byte,
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, diagnosticError(fmt.Sprintf("GET %s failed", reportURL(address)), err)
+		return nil, networkDiagnostic(fmt.Sprintf("GET %s failed", reportURL(address)), err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s returned HTTP %d (%s)", reportURL(address), resp.StatusCode, http.StatusText(resp.StatusCode))
+		cause := konfluxStatusError{address: reportURL(address), status: resp.StatusCode}
+		return nil, classify(checkStatusKind(resp.StatusCode), cause)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, registryResponseLimit+1))
 	if err != nil {
-		return nil, diagnosticError(fmt.Sprintf("could not read GET %s response", reportURL(address)), err)
+		return nil, networkDiagnostic(fmt.Sprintf("could not read GET %s response", reportURL(address)), err)
 	}
 	if len(data) > registryResponseLimit {
 		return nil, fmt.Errorf("GET %s response exceeds %d bytes", reportURL(address), registryResponseLimit)

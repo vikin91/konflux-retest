@@ -63,7 +63,7 @@ func (c registryClient) readiness(ctx context.Context, r imageRequirement) (stri
 	repo := strings.TrimPrefix(r.repository, "quay.io/")
 	manifest, digest, err := c.manifest(ctx, repo, r.tag)
 	if errors.Is(err, errRegistryMissing) {
-		return "image is missing", nil
+		return missingImageReason, nil
 	}
 	if err != nil {
 		return "", err
@@ -259,14 +259,15 @@ func (c registryClient) get(ctx context.Context, path string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("registry authentication/access denied (HTTP %d); image availability is unknown", resp.StatusCode)
+		cause := fmt.Errorf("registry authentication/access denied (HTTP %d); image availability is unknown", resp.StatusCode)
+		return nil, classify(checkStatusKind(resp.StatusCode), cause)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, registryResponseLimit+1))
 	if err != nil {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, classifyNetwork(err.Error(), err)
 		}
-		return nil, errors.New("network error reading registry response")
+		return nil, classifyNetwork("network error reading registry response", err)
 	}
 	if len(data) > registryResponseLimit {
 		return nil, errors.New("registry metadata exceeds size limit")
@@ -286,7 +287,8 @@ func (c registryClient) get(ctx context.Context, path string) ([]byte, error) {
 		}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("registry returned HTTP %d; image availability is unknown", resp.StatusCode)
+		cause := fmt.Errorf("registry returned HTTP %d; image availability is unknown", resp.StatusCode)
+		return nil, classify(checkStatusKind(resp.StatusCode), cause)
 	}
 	return data, nil
 }
@@ -303,17 +305,17 @@ func (c registryClient) request(ctx context.Context, address, authorization stri
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// Redirect URLs can carry signed credentials; do not include them in errors.
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+		if cause := ctx.Err(); cause != nil {
+			return nil, classifyNetwork(cause.Error(), cause)
 		}
-		return nil, errors.New("registry network/TLS error or timeout; image availability is unknown")
+		return nil, classifyNetwork("registry network/TLS error or timeout; image availability is unknown", err)
 	}
 	return resp, nil
 }
 
 func (c registryClient) registryToken(ctx context.Context, challenge string) (string, error) {
 	if !strings.HasPrefix(challenge, "Bearer ") {
-		return "", errors.New("registry authentication required; bearer access unavailable")
+		return "", classify(ErrCheckCredential, errors.New("registry authentication required; bearer access unavailable"))
 	}
 	params := make(map[string]string)
 	for _, match := range bearerParameter.FindAllStringSubmatch(challenge, -1) {
@@ -329,7 +331,7 @@ func (c registryClient) registryToken(ctx context.Context, challenge string) (st
 	q.Set("scope", params["scope"])
 	realm.RawQuery = q.Encode()
 	if (c.username == "") != (c.password == "") {
-		return "", errors.New("registry authentication requires both QUAY_USERNAME and QUAY_PASSWORD")
+		return "", classify(ErrCheckCredential, errors.New("registry authentication requires both QUAY_USERNAME and QUAY_PASSWORD"))
 	}
 	var authorization string
 	if c.username != "" {
@@ -341,7 +343,8 @@ func (c registryClient) registryToken(ctx context.Context, challenge string) (st
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("registry authentication failed (HTTP %d); image availability is unknown", resp.StatusCode)
+		cause := fmt.Errorf("registry authentication failed (HTTP %d); image availability is unknown", resp.StatusCode)
+		return "", classify(checkStatusKind(resp.StatusCode), cause)
 	}
 	var result struct {
 		Token       string `json:"token"`
@@ -349,7 +352,10 @@ func (c registryClient) registryToken(ctx context.Context, challenge string) (st
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, registryResponseLimit)).Decode(&result); err != nil {
 		if err := ctx.Err(); err != nil {
-			return "", err
+			return "", classifyNetwork(err.Error(), err)
+		}
+		if isNetworkError(err) {
+			return "", classifyNetwork("invalid registry authentication response", err)
 		}
 		return "", errors.New("invalid registry authentication response")
 	}
@@ -359,5 +365,5 @@ func (c registryClient) registryToken(ctx context.Context, challenge string) (st
 	if result.AccessToken != "" {
 		return result.AccessToken, nil
 	}
-	return "", errors.New("registry authentication returned no token")
+	return "", classify(ErrCheckCredential, errors.New("registry authentication returned no token"))
 }

@@ -3,6 +3,7 @@ package konfluxretest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -97,8 +98,21 @@ func TestCheckPRDisambiguatesArchivedPipelineRuns(t *testing.T) {
 				wantJobs = append(wantJobs, "scanner-v4-on-push")
 			}
 			wantError := tt.issue != "" && !tt.warningOnly
-			if (err != nil) != wantError || !slices.Equal(result.Jobs, wantJobs) || len(result.Runs) != 2 {
+			if (err != nil) != wantError || errors.Is(err, ErrCheckIdentity) != wantError ||
+				!slices.Equal(result.Jobs, wantJobs) || len(result.Runs) != 2 {
 				t.Fatalf("result=%+v error=%v, want jobs %v", result, err, wantJobs)
+			}
+			if tt.issue != "" {
+				severity := DiagnosticError
+				if tt.warningOnly {
+					severity = DiagnosticWarning
+				}
+				if !slices.ContainsFunc(result.Diagnostics, func(d CheckDiagnostic) bool {
+					return d.Job == "scanner-v4-on-push" && d.CheckRunID == scannerID &&
+						d.Severity == severity && errors.Is(d.Err, ErrCheckIdentity)
+				}) {
+					t.Fatalf("missing identity diagnostic: %+v", result.Diagnostics)
+				}
 			}
 			if tt.issue != "" && !strings.Contains(strings.Join(result.Warnings, "\n"), tt.issue) {
 				t.Fatalf("warnings=%v, want %q", result.Warnings, tt.issue)

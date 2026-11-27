@@ -199,6 +199,10 @@ func TestCheckPRRetainsUnaffectedJobsOnInputError(t *testing.T) {
 					checks[i].Conclusion = "failure"
 				}
 			}
+			unknown := buildCheck("checks", "completed", "failure")
+			unknown.ID = int64(len(checks) + 1)
+			unknown.DetailsURL = "https://example.test/unsupported"
+			checks = append(checks, unknown)
 			config := Config{
 				VerifyRunIdentity: true,
 				KonfluxToken:      func(context.Context, string) (string, error) { return "fixture", nil },
@@ -229,7 +233,9 @@ func TestCheckPRRetainsUnaffectedJobsOnInputError(t *testing.T) {
 				})},
 			}
 			result, err := CheckPR(t.Context(), config, "stackrox/stackrox", 1)
-			if err == nil || errors.Is(err, ErrUnsupportedRetagContract) != contractError || result.Action != ActionRetest || !slices.Equal(result.Jobs, []string{"roxctl-on-push"}) {
+			if !errors.Is(err, ErrCheckInput) || !errors.Is(err, ErrCheckIdentity) ||
+				errors.Is(err, ErrUnsupportedRetagContract) != contractError ||
+				result.Action != ActionRetest || !slices.Equal(result.Jobs, []string{"roxctl-on-push"}) {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
 			wantWarning := "HTTP 503"

@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -19,6 +20,69 @@ import (
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestCheckErrorClassification(t *testing.T) {
+	for name, tt := range map[string]struct {
+		status   int
+		header   http.Header
+		body     string
+		cause    error
+		wantKind konfluxretest.CheckErrorKind
+	}{
+		"should classify an invalid credential": {status: 401, wantKind: konfluxretest.ErrCheckCredential},
+		"should classify a denied permission":   {status: 403, wantKind: konfluxretest.ErrCheckPermission},
+		"should classify a rate limit status":   {status: 429, wantKind: konfluxretest.ErrCheckRateLimit},
+		"should classify an exhausted quota": {
+			status: 403, header: http.Header{"X-Ratelimit-Remaining": {"0"}}, wantKind: konfluxretest.ErrCheckRateLimit,
+		},
+		"should classify a rate limit retry header": {
+			status: 403, header: http.Header{"Retry-After": {"30"}}, wantKind: konfluxretest.ErrCheckRateLimit,
+		},
+		"should classify a secondary limit without headers": {
+			status: 403, body: `{"message":"You have exceeded a secondary rate limit. private-response"}`, wantKind: konfluxretest.ErrCheckRateLimit,
+		},
+		"should classify a connection failure": {cause: syscall.ECONNRESET, wantKind: konfluxretest.ErrCheckNetwork},
+		"should preserve a deadline":           {cause: context.DeadlineExceeded, wantKind: konfluxretest.ErrCheckNetwork},
+		"should preserve a canceled context":   {cause: context.Canceled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := konfluxretest.Config{HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				if tt.cause != nil {
+					return nil, fmt.Errorf("private-transport: %w", tt.cause)
+				}
+				return &http.Response{StatusCode: tt.status, Header: tt.header, Body: io.NopCloser(strings.NewReader(tt.body))}, nil
+			})}}
+			checks := map[string]func() (konfluxretest.Result, error){
+				"CheckPR": func() (konfluxretest.Result, error) {
+					return konfluxretest.CheckPR(t.Context(), config, "stackrox/scanner", 42)
+				},
+				"CheckTag": func() (konfluxretest.Result, error) {
+					return konfluxretest.CheckTag(t.Context(), config, "stackrox/scanner", "release/v1")
+				},
+			}
+			for name, check := range checks {
+				t.Run(name, func(t *testing.T) {
+					result, err := check()
+					if err == nil || tt.cause != nil && !errors.Is(err, tt.cause) {
+						t.Fatalf("error = %v, want underlying cause %v", err, tt.cause)
+					}
+					for _, kind := range []konfluxretest.CheckErrorKind{
+						konfluxretest.ErrCheckCredential, konfluxretest.ErrCheckPermission,
+						konfluxretest.ErrCheckRateLimit, konfluxretest.ErrCheckNetwork,
+					} {
+						if errors.Is(err, kind) != (kind == tt.wantKind) {
+							t.Fatalf("error = %v, unexpected match for %v", err, kind)
+						}
+					}
+					if len(result.Diagnostics) != 1 || result.Diagnostics[0].Severity != konfluxretest.DiagnosticError ||
+						result.Diagnostics[0].Err != err || strings.Contains(fmt.Sprintf("%+v", result), "private-") {
+						t.Fatalf("unexpected diagnostic: %+v", result.Diagnostics)
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestExportedChecks(t *testing.T) {
 	tests := map[string]struct {

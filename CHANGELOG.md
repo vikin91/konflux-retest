@@ -4,6 +4,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+1. `CheckPR` and `CheckTag` support error classification with `errors.Is`, and `Result.Diagnostics` exposes structured findings such as confirmed missing images.
+
 ## [0.4.0] - 2026-11-27
 
 ### Added

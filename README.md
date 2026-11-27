@@ -56,6 +56,35 @@ func checkBuild(ctx context.Context, token string) (konfluxretest.Result, error)
 
 Both functions require a full `OWNER/REPO` name and accept a context for cancellation. `Result` contains the link, resolved commit SHA, tag when resolved, next action, retry job names, explanatory message, and warnings. `Config.VerifyMissingPRTriggers` enables read-only verification of missing PR builds, reported separately in `Result.MissingPRJobs`. An error can accompany a partial result: unaffected jobs remain eligible, while jobs whose inputs could not be verified are withheld. Inspect both the result and the error.
 
+Use `errors.Is(err, konfluxretest.ErrCheckRateLimit)` to check for a GitHub or
+registry rate limit. Test each category independently because one error can
+contain several failures.
+
+| Category | Meaning |
+| --- | --- |
+| `ErrCheckCredential` | A credential is missing, unavailable, or rejected. |
+| `ErrCheckPermission` | The service or lookup policy denied access. |
+| `ErrCheckRateLimit` | The service reported a rate limit or exhausted quota. |
+| `ErrCheckNetwork` | A network request or response failed, or verification timed out. |
+| `ErrCheckIdentity` | PipelineRun evidence is missing, ambiguous, or insufficient to verify the run. |
+| `ErrCheckInput` | A required input could not be resolved or verified, or the evidence shows it is unusable. |
+| `ErrCheckRegistry` | The registry could not complete image verification. |
+| `ErrCheckImageMissing` | The registry or local pull confirmed that the requested image is missing. |
+
+The error chain carries sanitized causes such as HTTP status errors and context
+sentinels. Use `errors.Is` with `context.Canceled` or
+`context.DeadlineExceeded` to check for either condition. Transport and
+credential callback messages may contain secrets, so the library reports a safe
+summary and preserves known safe causes.
+
+`Result.Diagnostics` carries classifiable identity and input findings, along
+with any initial check failure. Each finding has an `Err` for `errors.Is`, a
+`Job` and `CheckRunID` when available, and a `Severity`. `DiagnosticError`
+contributes to the returned error. `DiagnosticWarning` is a result-only finding
+and can explain why a job was withheld even when the returned error is nil.
+Check diagnostics for `ErrCheckImageMissing` to detect confirmed absence.
+`Result.Warnings` remains available for display.
+
 The unreleased `konfluxretest.PRPostingComments(result)` API takes the result
 from `CheckPR` and returns the same comment bodies as `--post`, in posting order.
 The first comment, when needed, contains one `/konflux-retest` command per line

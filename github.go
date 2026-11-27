@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -99,17 +100,34 @@ func (c githubClient) get(ctx context.Context, path string, target any) error {
 	req.Header.Set("User-Agent", "konflux-retest")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return diagnosticError("GitHub API request failed", err)
+		return networkDiagnostic("GitHub API request failed", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		// Do not echo arbitrary response bodies, which can contain credentials or terminal controls.
-		return githubStatusError(resp.StatusCode)
+		kind := checkStatusKind(resp.StatusCode)
+		if resp.StatusCode == http.StatusForbidden && githubRateLimited(resp) {
+			kind = ErrCheckRateLimit
+		}
+		return classify(kind, githubStatusError(resp.StatusCode))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		if isNetworkError(err) {
+			return networkDiagnostic("could not decode GitHub response", err)
+		}
 		return diagnosticError("could not decode GitHub response", err)
 	}
 	return nil
+}
+
+// githubRateLimited checks the body for secondary limits without a retry header.
+func githubRateLimited(resp *http.Response) bool {
+	if resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "" {
+		return true
+	}
+	var detail struct{ Message string }
+	return json.NewDecoder(io.LimitReader(resp.Body, 16<<10)).Decode(&detail) == nil &&
+		strings.Contains(strings.ToLower(detail.Message), "secondary rate limit")
 }
 
 func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun, error) {
@@ -136,7 +154,7 @@ func (c githubClient) checks(ctx context.Context, repo, sha string) ([]checkRun,
 	}
 }
 
-func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker, repo, sourceRepo, sha string, checks []checkRun, jobs []string) (map[string]string, []string, error) {
+func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker, repo, sourceRepo string, result *Result, checks []checkRun, jobs []string) (map[string]string, []string, error) {
 	unavailable := make(map[string]string)
 	var warnings []string
 	var lookupErrors []error
@@ -145,7 +163,7 @@ func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker,
 		if data, exists := files[path]; exists {
 			return data, nil
 		}
-		data, err := c.file(ctx, sourceRepo, sha, path)
+		data, err := c.file(ctx, sourceRepo, result.SHA, path)
 		if err == nil {
 			files[path] = data
 		}
@@ -155,24 +173,30 @@ func checkRetagInputs(ctx context.Context, c githubClient, checker inputChecker,
 		if !strings.HasPrefix(job, "retag-") {
 			continue
 		}
-		requirement, err := resolveImage(readFile, job, "https://github.com/"+repo, sha)
-		if err != nil {
-			unavailable[job] = "cannot resolve input requirements: " + err.Error()
-			lookupErrors = append(lookupErrors, err)
-			continue
-		}
 		var latest checkRun
 		for _, check := range checks {
 			if isKonflux(check) && check.Name == checkPrefix+job && check.ID > latest.ID {
 				latest = check
 			}
 		}
+		requirement, err := resolveImage(readFile, job, "https://github.com/"+repo, result.SHA)
+		if err != nil {
+			err = classify(ErrCheckInput, err)
+			unavailable[job] = "cannot resolve input requirements: " + err.Error()
+			lookupErrors = append(lookupErrors, err)
+			result.Diagnostics = append(result.Diagnostics, CheckDiagnostic{Job: job, CheckRunID: latest.ID, Severity: DiagnosticError, Err: err})
+			continue
+		}
 		jobChecker := checker
 		if latest.Name == "" {
 			jobChecker.logs = nil
 		}
-		reason, notes, err := jobChecker.check(ctx, latest, requirement)
+		reason, notes, diagnostics, err := jobChecker.check(ctx, latest, requirement)
 		warnings = append(warnings, notes...)
+		for _, issue := range diagnostics {
+			issue.Job, issue.CheckRunID = job, latest.ID
+			result.Diagnostics = append(result.Diagnostics, issue)
+		}
 		if reason != "" {
 			unavailable[job] = requirement.image() + ": " + reason
 		}

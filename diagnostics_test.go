@@ -116,7 +116,7 @@ func TestIdentityAuthenticationAndURLFailuresExplainTheCause(t *testing.T) {
 		cause := errors.New("oc session expired; log in to api.example.openshiftapps.com")
 		client := &konfluxClient{token: func(context.Context, string) (string, error) { return "", cause }}
 		_, err := client.runIdentity(t.Context(), checkRun{DetailsURL: "https://konflux-ui.apps.example.openshiftapps.com/ns/builds/pipelinerun/run"}, "stackrox/fact", "head", "", 1)
-		if err == nil || !strings.Contains(err.Error(), "authentication failed for api.example.openshiftapps.com") ||
+		if !errors.Is(err, ErrCheckCredential) || !strings.Contains(err.Error(), "authentication failed for api.example.openshiftapps.com") ||
 			errors.Is(err, cause) || strings.Contains(err.Error(), cause.Error()) {
 			t.Fatalf("unexpected authentication diagnostic: %v", err)
 		}

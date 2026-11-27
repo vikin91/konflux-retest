@@ -62,6 +62,8 @@ type (
 		Message  string
 		Jobs     []string
 		Warnings []string
+		// Diagnostics provides classifiable errors and findings from identity and input checks.
+		Diagnostics []CheckDiagnostic
 		// MissingPRJobs lists missing builds with a verified PR comment trigger and ready inputs.
 		// These builds still block downstream milestones until they pass.
 		MissingPRJobs []string
@@ -112,6 +114,7 @@ const (
 
 // CheckPR checks the current head of an open PR in repo (OWNER/REPO).
 // It returns a usable Result even on error; unaffected jobs may still be eligible.
+// Use errors.Is with CheckErrorKind values to classify failures.
 // A closed PR returns ActionNone. No environment variables or local logins are read.
 func CheckPR(ctx context.Context, config Config, repo string, number int) (Result, error) {
 	if !refs.ValidRepository(repo) || number <= 0 {
@@ -125,6 +128,7 @@ func CheckPR(ctx context.Context, config Config, repo string, number int) (Resul
 // CheckTag resolves a fully qualified tag ref and checks its commit in repo (OWNER/REPO).
 // Annotated tags are peeled by GitHub; a same-named branch cannot select another commit.
 // It returns a usable Result even on error; unaffected jobs may still be eligible.
+// Use errors.Is with CheckErrorKind values to classify failures.
 func CheckTag(ctx context.Context, config Config, repo, tag string) (Result, error) {
 	if !refs.ValidRepository(repo) || !refs.ValidTag(tag) {
 		return failedResult(Result{}, errors.New("repo must be OWNER/REPO and tag must be a valid tag name"))
@@ -258,14 +262,14 @@ func checkCommit(ctx context.Context, c githubClient, checker inputChecker, repo
 	var identityWarnings []string
 	const noVerifiedBuild = "No verified build checks match the requested tag or PR."
 	if c.verifyIdentity && hasGitHubChecks {
-		checks, identityWarnings, identityErr = c.scopeChecks(ctx, checks, repo, result)
+		checks, identityWarnings, identityErr = c.scopeChecks(ctx, checks, repo, &result)
 	}
 	plan := planRetries(repo, checks, nil)
 	var candidates, triggerWarnings []string
 	if c.verifyMissingPRTriggers && result.prNumber > 0 && len(plan.missingJobs) > 0 {
 		candidates, triggerWarnings = c.verifyPRTriggers(ctx, sourceRepo, result.SHA, plan.missingJobs)
 	}
-	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, result.SHA, checks, slices.Concat(plan.jobs, candidates))
+	unavailable, warnings, inputErr := checkRetagInputs(ctx, c, checker, repo, sourceRepo, &result, checks, slices.Concat(plan.jobs, candidates))
 	if len(unavailable) > 0 {
 		plan = planRetries(repo, checks, unavailable)
 	}
@@ -320,6 +324,7 @@ func failedResult(result Result, err error) (Result, error) {
 	result.Action = ActionWait
 	result.Message = "Could not determine which jobs to retry."
 	result.Warnings = []string{"error: " + err.Error()}
+	result.Diagnostics = append(result.Diagnostics, CheckDiagnostic{Severity: DiagnosticError, Err: err})
 	return result, err
 }
 

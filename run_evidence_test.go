@@ -33,7 +33,7 @@ func TestScopeChecksPreservesIndependentResults(t *testing.T) {
 			}
 		}}
 		start := time.Now()
-		scoped, warnings, err := c.scopeChecks(t.Context(), []checkRun{fact, older, checks}, "stackrox/fact", Result{SHA: "head", Tag: "0.3.12"})
+		scoped, warnings, err := c.scopeChecks(t.Context(), []checkRun{fact, older, checks}, "stackrox/fact", &Result{SHA: "head", Tag: "0.3.12"})
 		if time.Since(start) != runLookupTimeout || !errors.Is(err, context.DeadlineExceeded) || len(warnings) != 1 {
 			t.Fatalf("duration=%v warnings=%v err=%v", time.Since(start), warnings, err)
 		}
@@ -65,7 +65,7 @@ func TestScopeChecksBoundsHistorySearch(t *testing.T) {
 			checks = append(checks, check)
 		}
 		start := time.Now()
-		scoped, _, err := c.scopeChecks(t.Context(), checks, "stackrox/fact", Result{SHA: "head", Tag: "0.3.12"})
+		scoped, _, err := c.scopeChecks(t.Context(), checks, "stackrox/fact", &Result{SHA: "head", Tag: "0.3.12"})
 		if time.Since(start) != scopeTimeout || !errors.Is(err, context.DeadlineExceeded) || len(scoped) != 1 || scoped[0].ID != 7 || scoped[0].Status != "unknown" {
 			t.Fatalf("duration=%v scoped=%+v err=%v", time.Since(start), scoped, err)
 		}

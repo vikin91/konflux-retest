@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -42,9 +43,10 @@ func (e runOriginError) Error() string { return string(e) }
 // Annotation keys follow Pipelines-as-Code pkg/kubeinteraction/labels.go.
 func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, sha, tag string, pr int) (observation runObservation, err error) {
 	category := "unsupported URLs"
+	kind := ErrCheckIdentity
 	defer func() {
 		if err != nil {
-			err = &identityFailure{category: category, cause: err}
+			err = &identityFailure{category: category, cause: classify(kind, err)}
 		}
 	}()
 	u, err := url.Parse(check.DetailsURL)
@@ -72,6 +74,7 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 		return runObservation{}, errors.New("unsupported PipelineRun name, expected a lowercase Kubernetes resource name")
 	}
 	category = "authentication failures"
+	kind = ""
 	cluster := strings.TrimPrefix(u.Host, "konflux-ui.apps.")
 	token, err := c.tokenForRun(ctx, check.App.ID, "api."+cluster, parts[1])
 	if err != nil {
@@ -95,24 +98,31 @@ func (c *konfluxClient) runIdentity(ctx context.Context, check checkRun, repo, s
 		address := "https://tekton-results-tekton-results.apps." + cluster + "/apis/results.tekton.dev/v1alpha2/parents/" + parts[1] + "/results/-/records?" + url.Values{"filter": {filter}, "page_size": {archivePageSize}}.Encode()
 		data, err = c.get(ctx, address, token)
 		if err != nil {
-			return runObservation{}, fmt.Errorf("PipelineRun identity unavailable in API and archive: API: %w; archive: %w", apiErr, err)
+			cause := fmt.Errorf("PipelineRun identity unavailable in API and archive: API: %w; archive: %w", apiErr, err)
+			liveStatus, liveOK := errors.AsType[konfluxStatusError](apiErr)
+			archiveStatus, archiveOK := errors.AsType[konfluxStatusError](err)
+			if liveOK && liveStatus.status == http.StatusNotFound && archiveOK && archiveStatus.status == http.StatusNotFound {
+				cause = classify(ErrCheckIdentity, cause)
+			}
+			return runObservation{}, cause
 		}
 		var response struct {
 			Records []archivedRun `json:"records"`
 			Next    string        `json:"next_page_token"`
 		}
 		if err := json.Unmarshal(data, &response); err != nil {
-			return runObservation{}, fmt.Errorf("API: %w; could not decode PipelineRun archive response", apiErr)
+			return runObservation{}, classify(ErrCheckIdentity, fmt.Errorf("API: %w; could not decode PipelineRun archive response", apiErr))
 		}
 		if len(response.Records) == 0 || response.Next != "" {
-			return runObservation{}, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=%t; API: %w", len(response.Records), response.Next != "", apiErr)
+			return runObservation{}, classify(ErrCheckIdentity, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=%t; API: %w", len(response.Records), response.Next != "", apiErr))
 		}
 		data, err = selectArchivedRun(response.Records, parts[1], parts[3], check.ID)
 		if err != nil {
-			return runObservation{}, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=false: %w; API: %w", len(response.Records), err, apiErr)
+			return runObservation{}, classify(ErrCheckIdentity, fmt.Errorf("ambiguous archived PipelineRun identity: records=%d, more_pages=false: %w; API: %w", len(response.Records), err, apiErr))
 		}
 	}
 	category = "identity validation failures"
+	kind = ErrCheckIdentity
 	matches, err := matchRunIdentity(data, parts[1], parts[3], check.ID, repo, sha, tag, pr)
 	if err != nil {
 		return runObservation{}, err

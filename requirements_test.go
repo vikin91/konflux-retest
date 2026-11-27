@@ -195,6 +195,16 @@ func TestCheckPRChecksRetagInputs(t *testing.T) {
 			if (err != nil) != tt.wantError {
 				t.Fatalf("error=%v", err)
 			}
+			if errors.Is(err, ErrCheckRegistry) != tt.wantError ||
+				errors.Is(err, ErrCheckPermission) != (tt.status == http.StatusForbidden) {
+				t.Fatalf("unexpected registry classification: %v", err)
+			}
+			if !slices.ContainsFunc(result.Diagnostics, func(d CheckDiagnostic) bool {
+				return d.Job == "retag-scanner" && d.CheckRunID == 2 &&
+					d.Severity == DiagnosticWarning && errors.Is(d.Err, ErrCheckImageMissing)
+			}) && tt.status == http.StatusNotFound {
+				t.Fatalf("missing image diagnostic: %+v", result.Diagnostics)
+			}
 			if slices.Contains(result.Jobs, "retag-scanner") != tt.retry {
 				t.Fatalf("unexpected scanner decision: %s", strings.Join(result.Warnings, "\n"))
 			}

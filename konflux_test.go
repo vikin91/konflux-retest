@@ -273,7 +273,7 @@ func TestInputCheckerUsesAvailableEvidence(t *testing.T) {
 					return tt.pullReason, nil
 				}
 			}
-			reason, warnings, err := checker.check(t.Context(), checkRun{}, requirement)
+			reason, warnings, _, err := checker.check(t.Context(), checkRun{}, requirement)
 			if (err != nil) != tt.wantError || reason != tt.want {
 				t.Fatalf("reason=%q warnings=%v err=%v", reason, warnings, err)
 			}
