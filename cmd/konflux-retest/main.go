@@ -91,7 +91,7 @@ func run(ctx context.Context, args []string, out, diagnostics io.Writer, config 
 		var links []string
 		var err error
 		if result.Tag == "" {
-			comments = prPostingComments(result)
+			comments = konfluxretest.PRPostingComments(result)
 			links, err = writer.PostPR(ctx, opts.repo, pr, result.SHA, comments)
 		} else {
 			links, err = writer.PostTag(ctx, opts.repo, result.Tag, result.SHA, comments)

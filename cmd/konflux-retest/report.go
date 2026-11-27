@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"slices"
-	"strings"
 
 	konfluxretest "github.com/vikin91/konflux-retest"
 )
@@ -12,23 +10,6 @@ import (
 type commentReport struct {
 	retries, starts, links []string
 	posted                 bool
-}
-
-func prPostingComments(result konfluxretest.Result) []string {
-	var batch, standalone []string
-	for _, job := range result.Jobs {
-		command := "/konflux-retest " + job
-		if slices.Contains(result.StandalonePRJobs, job) {
-			standalone = append(standalone, command)
-		} else {
-			batch = append(batch, command)
-		}
-	}
-	batch = append(batch, prComments(result.MissingPRJobs)...)
-	if len(batch) > 0 {
-		return append([]string{strings.Join(batch, "\n")}, standalone...)
-	}
-	return standalone
 }
 
 func retryComments(result konfluxretest.Result) []string {

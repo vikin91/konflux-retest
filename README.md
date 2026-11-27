@@ -16,7 +16,7 @@ It checks retag input images before suggesting those retries. It does not diagno
 
 By default, the CLI prints the `/konflux-retest` and `/retest` commands for eligible failures and verified missing PR builds. Add `--post` to post those same commands using your configured GitHub login. The CLI normally batches PR commands in one comment. Recovered GitHub check update failures and tag commands each get a separate comment. The report includes the posted comment links.
 
-The read-only analyzer returns eligible jobs and the assessed commit SHA to the CLI. The CLI formats the comments and hands them to its internal writer only with `--post`. Go projects that import the analyzer have access to the read-only API.
+The read-only library returns eligible jobs and the assessed commit SHA. It also formats PR comment bodies for the CLI and Go callers. The CLI hands comments to its internal writer only with `--post`.
 
 ## Build
 
@@ -55,6 +55,13 @@ func checkBuild(ctx context.Context, token string) (konfluxretest.Result, error)
 ```
 
 Both functions require a full `OWNER/REPO` name and accept a context for cancellation. `Result` contains the link, resolved commit SHA, tag when resolved, next action, retry job names, explanatory message, and warnings. `Config.VerifyMissingPRTriggers` enables read-only verification of missing PR builds, reported separately in `Result.MissingPRJobs`. An error can accompany a partial result: unaffected jobs remain eligible, while jobs whose inputs could not be verified are withheld. Inspect both the result and the error.
+
+The unreleased `konfluxretest.PRPostingComments(result)` API takes the result
+from `CheckPR` and returns the same comment bodies as `--post`, in posting order.
+The first comment, when needed, contains one `/konflux-retest` command per line
+for regular retries followed by missing builds. Each standalone retry gets its
+own comment after the batch. Use each returned string as the `body` of a separate
+`POST /repos/{owner}/{repo}/issues/{number}/comments` request from your application.
 
 The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
 
