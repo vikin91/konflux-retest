@@ -29,6 +29,10 @@ type (
 		QuayUsername            string
 		QuayPassword            string
 
+		// GitHubBaseURL overrides the API base for CheckPR and CheckTag. Empty uses https://api.github.com.
+		// Use an absolute HTTP or HTTPS URL without user info, a query, or a fragment.
+		// GitHubToken is sent to this server when set.
+		GitHubBaseURL string
 		// HTTPClient supplies transport and timeout settings. Nil uses a 30-second timeout.
 		// The client is copied; redirect policies are set to protect service credentials.
 		HTTPClient *http.Client
@@ -152,7 +156,16 @@ func (config Config) clients() (githubClient, inputChecker) {
 		req.Header.Del("Referer")
 		return nil
 	}
-	client := githubClient{verifyIdentity: config.VerifyRunIdentity, baseURL: "https://api.github.com", token: config.GitHubToken, http: &httpClient}
+	baseURL := config.GitHubBaseURL
+	if baseURL == "" {
+		baseURL = "https://api.github.com"
+	}
+	client := githubClient{
+		verifyIdentity: config.VerifyRunIdentity,
+		baseURL:        strings.TrimRight(baseURL, "/"),
+		token:          config.GitHubToken,
+		http:           &httpClient,
+	}
 	checker := inputChecker{
 		registry: registryClient{
 			baseURL: "https://quay.io", username: config.QuayUsername, password: config.QuayPassword,

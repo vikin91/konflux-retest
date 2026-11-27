@@ -4,6 +4,10 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+### Added
+
+1. `Config.GitHubBaseURL` lets Go callers point `CheckPR` and `CheckTag` at a local GitHub API test server.
+
 ## [0.3.0] - 2026-11-27
 
 ### Added

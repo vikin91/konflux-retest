@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
@@ -70,6 +71,43 @@ func TestExportedChecks(t *testing.T) {
 	}
 }
 
+func TestCheckPRWithGitHubBaseURL(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/repos/stackrox/scanner/pulls/42", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"state":"open","head":{"sha":"head"}}`)
+	})
+	mux.HandleFunc("GET /api/repos/stackrox/scanner/commits/head/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"check_runs":[{"id":1,"name":"Red Hat Konflux / scanner-on-push","status":"completed","conclusion":"failure","app":{"id":296509}}]}`)
+	})
+	mux.HandleFunc("GET /api/repos/stackrox/scanner/pulls/43", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/redirect-target", http.StatusFound)
+	})
+	mux.HandleFunc("GET /redirect-target", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("GitHub redirect was followed")
+		w.WriteHeader(http.StatusForbidden)
+	})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Error("GitHub request is missing the configured token")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	config := konfluxretest.Config{GitHubBaseURL: server.URL + "/api/", GitHubToken: "test-token"}
+	result, err := konfluxretest.CheckPR(t.Context(), config, "stackrox/scanner", 42)
+	if err != nil || result.URL != "https://github.com/stackrox/scanner/pull/42" || result.SHA != "head" ||
+		result.Action != konfluxretest.ActionRetest || !slices.Equal(result.Jobs, []string{"scanner-on-push"}) {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	result, err = konfluxretest.CheckPR(t.Context(), config, "stackrox/scanner", 43)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 302") || result.Action != konfluxretest.ActionWait {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+}
+
 func TestExportedChecksRejectInvalidInputs(t *testing.T) {
 	config := konfluxretest.Config{HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("invalid input reached the network")
@@ -94,6 +132,31 @@ func TestExportedChecksRejectInvalidInputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			result, err := check()
 			if err == nil || result.Action != konfluxretest.ActionWait || len(result.Jobs) != 0 {
+				t.Fatalf("result=%+v error=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestCheckPRRejectsInvalidGitHubBaseURL(t *testing.T) {
+	for name, baseURL := range map[string]string{
+		"relative URL":    "/api",
+		"missing host":    "https:///api",
+		"non-HTTP scheme": "ftp://example.test",
+		"user info":       "https://user:secret@example.test",
+		"query":           "https://example.test?secret=value",
+		"fragment":        "https://example.test#secret",
+	} {
+		t.Run(name, func(t *testing.T) {
+			config := konfluxretest.Config{
+				GitHubBaseURL: baseURL,
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					t.Fatal("invalid GitHub base URL reached the network")
+					return nil, errors.New("unexpected request")
+				})},
+			}
+			result, err := konfluxretest.CheckPR(t.Context(), config, "stackrox/scanner", 42)
+			if err == nil || err.Error() != "invalid GitHub request URL" || result.Action != konfluxretest.ActionWait {
 				t.Fatalf("result=%+v error=%v", result, err)
 			}
 		})

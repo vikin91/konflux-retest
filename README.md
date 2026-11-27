@@ -65,6 +65,14 @@ own comment after the batch. Use each returned string as the `body` of a separat
 
 The library does not read environment variables, discover saved logins, execute subprocesses, print output, or exit the process. Supply `GitHubToken` and optional `QuayUsername`/`QuayPassword` through `Config`. Optional `KonfluxToken` and `PullImage` callbacks provide log authentication and image verification; leaving them nil uses registry checks only. `HTTPClient` optionally supplies a custom transport and timeout. The library copies it and applies credential-safe redirect policies. Without one, requests use a 30-second timeout.
 
+In tests, set `Config.GitHubBaseURL` to your `httptest` server's URL, for example
+`konfluxretest.Config{GitHubBaseURL: server.URL}`. `CheckPR` and `CheckTag` send
+their GitHub API requests there. Leave the field empty to use
+`https://api.github.com`. The base must be an absolute HTTP or HTTPS URL and
+can include a path prefix. It must omit user info, a query, and a fragment.
+Use a test token if your server checks authorization.
+GitHub API requests never follow redirects.
+
 Return a token from `KonfluxToken` only for exact cluster API hostnames you
 trust. The library uses that token for the cluster API and its Tekton Results
 route. For a hosted app, use `AllowKonfluxLookup` to check the GitHub App ID,

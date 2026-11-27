@@ -87,7 +87,8 @@ func (c githubClient) file(ctx context.Context, repo, sha, path string) ([]byte,
 
 func (c githubClient) get(ctx context.Context, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
+	if err != nil || (req.URL.Scheme != "http" && req.URL.Scheme != "https") ||
+		req.URL.Hostname() == "" || req.URL.User != nil || strings.ContainsAny(c.baseURL, "?#") {
 		return errors.New("invalid GitHub request URL")
 	}
 	if c.token != "" {
