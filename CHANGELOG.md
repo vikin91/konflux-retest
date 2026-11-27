@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## [0.3.0] - 2026-11-27
+
 ### Added
 
 1. `PRPostingComments` is a compatible addition to the Go API that returns the same PR comment bodies and posting order as the CLI.
