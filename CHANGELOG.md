@@ -4,6 +4,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
 
+## [0.5.0] - 2026-11-27
+
 ### Added
 
 1. `CheckPR` and `CheckTag` support error classification with `errors.Is`, and `Result.Diagnostics` exposes structured findings such as confirmed missing images.
@@ -59,6 +61,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 1. PipelineRun identity errors identify affected jobs and report failures from both the live API and the archive when both lookups fail.
 2. Tekton Results lookups use a supported page size and leave time for the archive when the live lookup stalls.
 
+[0.5.0]: https://github.com/vikin91/konflux-retest/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/vikin91/konflux-retest/compare/v0.3.0...v0.4.0
 [0.2.0]: https://github.com/vikin91/konflux-retest/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/vikin91/konflux-retest/compare/v0.0.1...v0.1.0
